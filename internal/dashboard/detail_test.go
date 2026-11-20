@@ -12,6 +12,7 @@ import (
 
 	"github.com/st3fan/preview-controller/internal/config"
 	"github.com/st3fan/preview-controller/internal/githubmeta"
+	"github.com/st3fan/preview-controller/internal/health"
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
@@ -23,7 +24,7 @@ func TestPreviewDetail(t *testing.T) {
 	mux := http.NewServeMux()
 	RegisterDetail(mux, config.Config{PreviewDomain: "preview.example.com", Projects: map[string]config.Project{
 		"alpha": {Repository: "https://github.com/example/alpha.git"},
-	}}, store.Load)
+	}}, store.Load, health.New(store, nil, nil))
 	acceptedAt := time.Date(2026, 11, 20, 12, 29, 0, 0, time.UTC)
 	activatedAt := acceptedAt.Add(42 * time.Second)
 	env := state.Environment{
@@ -50,15 +51,16 @@ func TestPreviewDetail(t *testing.T) {
 	page := readPage(t, server.Client(), path+"18", http.StatusOK)
 	requireText(t, page, env.URL, "https://github.com/example/alpha/issues/18", "alpha #18",
 		env.Attempts[0].Commit, "/dashboard/logs/alpha/18/active", "2026-11-20T12:30:00Z", "Compose build", "Build failed.", "&lt;script&gt;alert(1)&lt;/script&gt;")
-	requireText(t, page, "2026-11-20T12:29:00Z", "2026-11-20T12:29:42Z", "Time to preview 42s",
-		"2026-11-20T12:30:23Z", "Time to preview 23s", "Timing unavailable")
-	if strings.Count(page, "Time to preview") != 2 {
+	requireText(t, page, "2026-11-20T12:29:00Z", "2026-11-20T12:29:42Z", "<dt>Time to preview</dt><dd>42s</dd>",
+		"2026-11-20T12:30:23Z", "<dt>Time to preview</dt><dd>23s</dd>", "Timing unavailable")
+	if strings.Count(page, "<dt>Activated</dt>") != 2 {
 		t.Fatalf("unexpected attempt timings: %s", page)
 	}
 	if strings.Contains(page, "<script>alert") {
 		t.Fatal("diagnostics rendered as markup")
 	}
 	_, recent, _ := strings.Cut(page, "<h2>Recent attempts</h2>")
+	recent, _, _ = strings.Cut(recent, "</section>")
 	if strings.Contains(recent, env.Attempts[1].Commit) || strings.Count(recent, "<article ") != 10 ||
 		strings.Index(recent, env.Attempts[11].Commit) >= strings.Index(recent, env.Attempts[2].Commit) {
 		t.Fatalf("unexpected recent attempt history: %s", page)
@@ -84,7 +86,7 @@ func TestDetailGitHubMetadata(t *testing.T) {
 	}}
 	load := func(string, int64) (state.Environment, error) { return env, nil }
 	mux := http.NewServeMux()
-	registerDetail(mux, cfg, load, func(_ context.Context, repository string, intent int64) githubmeta.Result {
+	registerDetail(mux, cfg, load, health.New(nil, nil, nil), func(_ context.Context, repository string, intent int64) githubmeta.Result {
 		if repository != "example/alpha" || intent != 51 {
 			t.Fatalf("unexpected lookup %s #%d", repository, intent)
 		}
@@ -133,12 +135,31 @@ func TestDetailGitHubMetadata(t *testing.T) {
 	}
 
 	mux = http.NewServeMux()
-	registerDetail(mux, cfg, load, func(context.Context, string, int64) githubmeta.Result { return githubmeta.Result{} })
+	registerDetail(mux, cfg, load, health.New(nil, nil, nil), func(context.Context, string, int64) githubmeta.Result { return githubmeta.Result{} })
 	resp = httptest.NewRecorder()
 	mux.ServeHTTP(resp, request)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("fallback returned HTTP %d", resp.Code)
 	}
 	requireText(t, resp.Body.String(), "Deployment title", "GitHub metadata unavailable.", "GitHub activity is unavailable.",
-		"Deployment requested", "Preview activated", "Deployment failed", "Time to preview 1m0s")
+		"Deployment requested", "Preview activated", "Deployment failed", "<dt>Time to preview</dt><dd>1m0s</dd>")
+}
+
+func TestArchivedDetailKeepsServingRevision(t *testing.T) {
+	const sha = "0123456789abcdef0123456789abcdef01234567"
+	cfg := config.Config{PreviewDomain: "preview.example.com", Projects: map[string]config.Project{"demo": {Repository: "https://github.com/example/demo"}}}
+	archived := time.Now()
+	env := state.Environment{Project: "demo", Intent: 12, ActiveCommit: sha, ActiveDeploymentID: "serving", DeleteAt: &archived, Attempts: []state.Attempt{
+		{ID: "serving", Commit: sha, Status: state.Healthy},
+		{ID: "replacement", Commit: strings.Repeat("f", 40), Status: state.Failed},
+	}}
+	mux := http.NewServeMux()
+	RegisterDetail(mux, cfg, func(string, int64) (state.Environment, error) { return env, nil }, health.New(nil, cfg.Projects, nil))
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/dashboard/previews/demo/12", nil))
+	body := response.Body.String()
+	requireText(t, body, "Archived deployment", "Archived commit", ">Offline<", `href="https://github.com/example/demo/commit/`+sha+`" target="_blank"`, ">Failed<")
+	if strings.Contains(body, "Open preview") || strings.Contains(body, "/dashboard/logs/") {
+		t.Fatal("archived detail offers live navigation")
+	}
 }

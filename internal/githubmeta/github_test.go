@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -76,6 +77,42 @@ func TestLookup(t *testing.T) {
 					pr.Commits == nil || len(pr.Commits.Nodes) != 1 || pr.Commits.Nodes[0].Commit.CommittedDate.IsZero()) {
 					t.Fatalf("unexpected PR activity: %+v", pr)
 				}
+			}
+		})
+	}
+}
+
+func TestLookupTitle(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		status     int
+		body, want string
+	}{
+		{"title", 200, `{"data":{"repository":{"issue":{"number":12,"title":"  A title  ","repository":{"nameWithOwner":"Example/repo"}}}}}`, "A title"},
+		{"different repository", 200, `{"data":{"repository":{"issue":{"number":12,"title":"Other","repository":{"nameWithOwner":"elsewhere/repo"}}}}}`, ""},
+		{"missing", 200, `{"data":{"repository":{"issue":null}}}`, ""},
+		{"limited", 429, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body struct {
+					Query     string
+					Variables struct {
+						Owner, Repo string
+						Number      int
+					}
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Variables.Owner != "example" || body.Variables.Repo != "repo" || body.Variables.Number != 12 || strings.Contains(body.Query, "subIssues") || r.Header.Get("Authorization") != "Bearer token" {
+					t.Error("unexpected title request")
+				}
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			client := New("token")
+			client.endpoint = server.URL
+			if got := client.LookupTitle(t.Context(), "example/repo", 12); got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
 	}

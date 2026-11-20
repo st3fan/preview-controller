@@ -6,18 +6,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false}'>
   <title>Preview environments</title>
-  <script src="/dashboard/assets/theme.js"></script>
-  <link rel="stylesheet" href="/dashboard/assets/dashboard.css">
+  {{template "page-assets"}}
   <script defer src="/dashboard/assets/htmx-2.0.11.min.js"></script>
   <script defer src="/dashboard/assets/sse-2.2.4.js"></script>
   <script defer src="/dashboard/assets/delete.js"></script>
 </head>
 <body>
-  <main>
-    <header class="page-header">
-      <h1>Preview environments</h1>
-      {{template "theme-toggle"}}
-    </header>
+  {{template "masthead"}}
+  <main class="wrap">
+    <h1>Preview environments</h1>
     <p id="delete-status" role="status"></p>
     <div hx-ext="sse" sse-connect="/dashboard/events">
       <div sse-swap="environments">{{template "environments" .}}</div>
@@ -30,60 +27,59 @@
 {{define "environments"}}
 {{if .Unavailable}}
 <p role="status">Could not load preview environments.</p>
-{{else}}
-{{range .Projects}}
-<section>
-  <h2>{{.Name}}</h2>
-  {{template "preview-table" .Environments}}
-</section>
-{{end}}
-{{with .Archived}}
-<section>
-  <h2>Archived</h2>
-  {{template "preview-table" .}}
-</section>
-{{end}}
-{{if not (or .Projects .Archived)}}
+{{else if not (or .Projects .Archived)}}
 <p>No preview environments yet.</p>
+{{else}}
+<p class="intro">{{.LiveCount}} active environment{{if ne .LiveCount 1}}s{{end}} · {{.ArchivedCount}} archived</p>
+{{range .Projects}}
+<section class="panel">
+  <header class="panel-head"><h2>Live Environments</h2><span class="count">{{len .Environments}}</span><span class="project">{{.Name}}</span></header>
+  {{range .Environments}}{{template "environment" .}}{{end}}
+</section>
+{{end}}
+{{range .Archived}}
+<section class="panel">
+  <header class="panel-head"><h2>Archived</h2><span class="count">{{len .Environments}}</span><span class="project">{{.Name}}</span></header>
+  {{range .Environments}}{{template "environment" .}}{{end}}
+</section>
 {{end}}
 {{end}}
 {{end}}
 
-{{define "preview-table"}}
-  <div class="table-scroll">
-    <table aria-label="preview environments">
-      <thead>
-        <tr><th scope="col">Intent</th><th scope="col">Preview</th><th scope="col">Active commit</th><th scope="col">Active health</th><th scope="col">Latest deployment</th><th scope="col">Deployment logs</th><th scope="col">Schedule</th><th scope="col">Actions</th></tr>
-      </thead>
-      <tbody>
-      {{range .}}
-        {{$intent := .Intent}}
-        {{$project := .Project}}
-        <tr>
-          <th scope="row">{{if .IntentURL}}<a href="{{.IntentURL}}" target="_blank" rel="noopener">{{template "intent-label" .}}</a>{{else}}{{template "intent-label" .}}{{end}}</th>
-          <td>{{if .Archived}}{{$project}}{{else if or (eq .Status "archiving") (eq .Status "deleting")}}Offline{{else}}<a href="{{.URL}}">Open preview</a>{{end}} · <a href="/dashboard/previews/{{$project}}/{{$intent}}">Details</a></td>
-          <td>{{if .CommitURL}}<a href="{{.CommitURL}}" target="_blank" rel="noopener"><code title="{{.Commit}}">{{.ShortCommit}}</code></a>{{else if .Commit}}<code title="{{.Commit}}">{{.ShortCommit}}</code>{{else}}None{{end}}</td>
-          <td>
-            <span class="status{{if eq .Health.Status "Unhealthy"}} failed{{end}}">{{.Health.Status}}</span>
-            {{if not .Health.LastSuccess.IsZero}}<div>Last success <time datetime="{{.Health.LastSuccess.Format "2006-01-02T15:04:05Z07:00"}}">{{.Health.LastSuccess.Format "Jan 2, 2006 15:04:05 UTC"}}</time></div>{{end}}
-            {{with .Health.Failure}}<div>Latest failure: {{.}}</div>{{end}}
-          </td>
-          <td>{{if .Status}}<span class="status {{.Status}}">{{.Status}}</span>{{else}}No attempts{{end}}{{with .LifecycleError}}<div>{{.}}</div>{{end}}</td>
-          <td>{{range .Logs}}<div><a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}" target="_blank" rel="noopener">Live logs</a> <code>{{.ID}}</code> <span class="status {{.Status}}">{{.Status}}</span></div>{{else}}Unavailable{{end}}</td>
-          <td>{{if .Deadline}}{{if .Archived}}Delete{{else}}Archive{{end}} <time datetime="{{.Deadline.Format "2006-01-02T15:04:05Z07:00"}}">{{.Deadline.Format "Jan 2, 2006 15:04 UTC"}}</time>{{end}}</td>
-          <td>{{if .CanArchive}}<button type="button" data-action="archive" data-action-url="/dashboard/environments/{{$project}}/{{$intent}}/archive" data-preview="{{$project}} #{{$intent}}">Archive</button>{{end}}{{if .CanRestore}}<button type="button" data-action="restore" data-action-url="/dashboard/environments/{{$project}}/{{$intent}}/restore" data-preview="{{$project}} #{{$intent}}">Restore</button>{{end}} <button type="button" class="delete-preview" data-delete-url="/dashboard/environments/{{$project}}/{{$intent}}/delete" data-preview="{{$project}} #{{$intent}}" aria-label="Delete {{$project}} #{{$intent}}"><span aria-hidden="true"></span></button></td>
-        </tr>
+{{define "environment"}}
+<article class="environment">
+  <h3><a href="/dashboard/previews/{{.Project}}/{{.Intent}}">{{template "intent-label" .}}</a>
+    {{if .IntentURL}}<a class="issue-source" href="{{.IntentURL}}" target="_blank" rel="noopener" aria-label="GitHub issue #{{.Intent}} (opens in a new tab)" title="GitHub issue">{{template "icon" "box-arrow-up-right"}}</a>{{end}}
+  </h3>
+  <div class="environment-info">
+    <dl><dt>{{if .Archived}}Archived{{else}}Active{{end}} commit</dt><dd>
+      {{if .CommitURL}}<a href="{{.CommitURL}}" target="_blank" rel="noopener"><code title="{{.Commit}}">{{.ShortCommit}}</code>{{template "new-tab"}}</a>
+      {{else if .Commit}}<code title="{{.Commit}}">{{.ShortCommit}}</code>{{else}}None{{end}}
+    </dd></dl>
+    <dl><dt>{{if .Archived}}Status{{else}}Active health{{end}}</dt><dd>
+      {{if .Archived}}{{template "badge" "Offline"}}{{else}}{{template "badge" .Health.Status}}{{end}}
+      {{with .Operation}}<small>{{.}}</small>{{end}}
+      {{with .Health.Failure}}<small>Latest failure: {{.}}</small>{{end}}
+    </dd></dl>
+    <dl><dt>Latest deployment</dt><dd>{{with .Latest}}{{template "badge" (outcome .Status)}}
+      {{if not .UpdatedAt.IsZero}}<time class="sub" datetime="{{.UpdatedAt.UTC.Format "2006-01-02T15:04:05Z"}}">{{.UpdatedAt.UTC.Format "15:04 UTC"}}</time>{{end}}
+      {{else}}No attempts{{end}}</dd></dl>
+    <dl class="environment-type"><dt>Type</dt><dd>Compose</dd></dl>
+    <dl><dt>Schedule</dt><dd>{{if .Deadline}}{{if .Archived}}Delete{{else}}Archive{{end}}
+      <time datetime="{{.Deadline.UTC.Format "2006-01-02T15:04:05Z"}}" title="{{.Deadline.UTC.Format "Jan 2, 2006 15:04 UTC"}}">{{.Deadline.UTC.Format "Jan 2, 15:04 UTC"}}</time>
+      {{else}}—{{end}}</dd></dl>
+    <div class="environment-actions" role="group" aria-label="Actions for {{.Project}} #{{.Intent}}">
+      {{if and .URL (not .Archived) (not .Operation)}}
+      <a class="icon-action" data-tip="Open preview" href="{{.URL}}" target="_blank" rel="noopener" aria-label="Open preview for {{.Project}} #{{.Intent}} (opens in a new tab)">{{template "icon" "box-arrow-up-right"}}</a>
       {{end}}
-      </tbody>
-    </table>
+      {{range .Logs}}
+      <a class="icon-action" data-tip="Live logs · {{.ID}}" href="/dashboard/logs/{{$.Project}}/{{$.Intent}}/{{.ID}}" target="_blank" rel="noopener" aria-label="Live logs for {{$.Project}} #{{$.Intent}}, {{.ID}} (opens in a new tab)">{{template "icon" "journal-text"}}<span class="new-tab-corner">{{template "icon" "box-arrow-up-right"}}</span></a>
+      {{end}}
+      {{if .CanArchive}}<button class="icon-action" type="button" data-tip="Archive" aria-label="Archive {{.Project}} #{{.Intent}}" data-action="archive" data-action-url="/dashboard/environments/{{.Project}}/{{.Intent}}/archive" data-preview="{{.Project}} #{{.Intent}}">{{template "icon" "archive"}}</button>{{end}}
+      {{if .CanRestore}}<button class="icon-action" type="button" data-tip="Restore" aria-label="Restore {{.Project}} #{{.Intent}}" data-action="restore" data-action-url="/dashboard/environments/{{.Project}}/{{.Intent}}/restore" data-preview="{{.Project}} #{{.Intent}}">{{template "icon" "arrow-counterclockwise"}}</button>{{end}}
+      <button class="icon-action danger" type="button" data-tip="Delete" data-delete-url="/dashboard/environments/{{.Project}}/{{.Intent}}/delete" data-preview="{{.Project}} #{{.Intent}}" aria-label="Delete {{.Project}} #{{.Intent}}">{{template "icon" "trash"}}</button>
+    </div>
   </div>
-{{end}}
-
-{{define "intent-label"}}#{{.Intent}}{{with .IssueTitle}} {{.}}{{end}}{{end}}
-
-{{define "theme-toggle"}}
-      <button id="theme-toggle" type="button" aria-label="Dark theme" aria-pressed="false" hidden>
-        <span class="theme-icon moon" aria-hidden="true">☾</span>
-        <span class="theme-icon sun" aria-hidden="true">☀</span>
-      </button>
+  {{with .LifecycleError}}<p class="danger">{{.}}</p>{{end}}
+</article>
 {{end}}

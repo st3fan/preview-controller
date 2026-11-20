@@ -1,0 +1,20 @@
+{{define "page-assets"}}
+  <script src="/dashboard/assets/theme.js"></script>
+  <link rel="stylesheet" href="/dashboard/assets/bootstrap-reboot-5.3.8.min.css">
+  <link rel="stylesheet" href="/dashboard/assets/dashboard.css">
+{{end}}
+
+{{define "masthead"}}
+<header class="mast"><div class="wrap mast-inner">
+  <span class="brand-mark" aria-hidden="true"></span>
+  <div class="brand"><strong>Preview Controller</strong>
+    {{with controllerBuild}}<a href="{{.URL}}">{{.Label}}</a>{{end}}
+  </div>
+  <button id="theme-toggle" type="button" aria-label="Color theme" hidden>{{template "icon" "display"}}</button>
+</div></header>
+{{end}}
+
+{{define "intent-label"}}#{{.Intent}}{{with .IssueTitle}} {{.}}{{end}}{{end}}
+{{define "icon"}}<svg class="icon" aria-hidden="true" focusable="false"><use href="/dashboard/assets/icons.svg#icon-{{.}}"></use></svg>{{end}}
+{{define "new-tab"}}<span class="external">{{template "icon" "box-arrow-up-right"}}</span><span class="sr-only"> (opens in a new tab)</span>{{end}}
+{{define "badge"}}<span class="status" data-status="{{.}}">{{.}}</span>{{end}}

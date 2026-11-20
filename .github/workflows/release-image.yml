@@ -54,6 +54,9 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            CONTROLLER_REVISION=${{ github.sha }}
+            CONTROLLER_RELEASE=${{ github.event.release.tag_name }}
           push: true
           labels: ${{ steps.metadata.outputs.labels }}
           tags: ${{ steps.metadata.outputs.tags }}

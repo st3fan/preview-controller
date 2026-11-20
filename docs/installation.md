@@ -81,9 +81,11 @@ For an interactive Bash session:
 ```bash
 read -rsp 'Deployment token: ' PREVIEW_SERVER_TOKEN
 export PREVIEW_SERVER_TOKEN
-docker compose up -d --build
+PREVIEW_CONTROLLER_REVISION=$(git rev-parse HEAD) docker compose up -d --build
 unset PREVIEW_SERVER_TOKEN
 ```
+
+The build uses `PREVIEW_CONTROLLER_REVISION` to show the checkout’s short commit hash in the dashboard. Images built without revision metadata display “Development build”. Published release images include the release tag and revision.
 
 Supply the same token when recreating the service. Any variables referenced by
 `compose_env_from` also need to be passed through the controller service environment.
@@ -195,13 +197,20 @@ unsupported field can produce the same error.
 
 ## GitHub metadata
 
-To show live GitHub information on a preview detail page, set
+To enable GitHub titles on the dashboard and live GitHub information on detail pages, set
 `"github_token_env": "PREVIEW_GITHUB_TOKEN"` in the controller's JSON settings
 and pass `PREVIEW_GITHUB_TOKEN` in the controller process environment. For systemd
 use the service's environment file. The supplied Compose files pass
 `PREVIEW_GITHUB_TOKEN` through from the Compose environment, including a local
 `.env` file or a Portainer stack variable. Use a fine-grained token restricted to the configured
 repositories with read access to Issues and Pull requests.
+
+The dashboard uses the newest nonempty `issue_title` supplied by a deployment.
+When no attempt has a title, the controller looks up the issue for that
+configured project in the background, including for archived environments.
+Open dashboards update when the title arrives. Failed lookups retain the last
+known title, or show the issue number if no title is available. These lookups
+supply operator pages only.
 
 The detail page uses the existing deployment Intent number to find the issue in
 the project's configured repository. Related tickets are direct, same-repository

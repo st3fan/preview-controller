@@ -15,11 +15,13 @@ import (
 
 	"github.com/st3fan/preview-controller/internal/config"
 	"github.com/st3fan/preview-controller/internal/githubmeta"
+	"github.com/st3fan/preview-controller/internal/health"
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
 type detailAttempt struct {
 	state.Attempt
+	CommitURL  string
 	LiveLogs   bool
 	Diagnostic state.Diagnostic
 }
@@ -33,6 +35,8 @@ func (a detailAttempt) TimeToPreview() string {
 
 type detailView struct {
 	state.Environment
+	Health                    health.Observation
+	ArchivedCommitURL         string
 	IssueURL                  string
 	IssueTitle                string
 	RepositoryURL             string
@@ -45,19 +49,19 @@ type detailView struct {
 	DeploymentActivityPartial bool
 }
 
-func liveLogsAvailable(env state.Environment) bool {
+func liveActionsAvailable(env state.Environment) bool {
 	return !env.Deleting && env.DeleteAt == nil && env.LifecycleOperation == ""
 }
 
-func RegisterDetail(mux *http.ServeMux, cfg config.Config, load func(string, int64) (state.Environment, error)) {
+func RegisterDetail(mux *http.ServeMux, cfg config.Config, load func(string, int64) (state.Environment, error), monitor *health.Monitor) {
 	var lookup func(context.Context, string, int64) githubmeta.Result
 	if token := os.Getenv(cfg.GitHubTokenEnv); strings.TrimSpace(token) != "" {
 		lookup = githubmeta.New(token).Lookup
 	}
-	registerDetail(mux, cfg, load, lookup)
+	registerDetail(mux, cfg, load, monitor, lookup)
 }
 
-func registerDetail(mux *http.ServeMux, cfg config.Config, load func(string, int64) (state.Environment, error), lookup func(context.Context, string, int64) githubmeta.Result) {
+func registerDetail(mux *http.ServeMux, cfg config.Config, load func(string, int64) (state.Environment, error), monitor *health.Monitor, lookup func(context.Context, string, int64) githubmeta.Result) {
 	mux.HandleFunc("GET /dashboard/previews/{project}/{intent}", func(w http.ResponseWriter, r *http.Request) {
 		project := r.PathValue("project")
 		intent, err := strconv.ParseInt(r.PathValue("intent"), 10, 64)
@@ -74,7 +78,7 @@ func registerDetail(mux *http.ServeMux, cfg config.Config, load func(string, int
 			http.Error(w, "Could not load preview", http.StatusServiceUnavailable)
 			return
 		}
-		data := detailView{Environment: env}
+		data := detailView{Environment: env, Health: monitor.Lookup(env), IssueTitle: submittedTitle(env.Attempts)}
 		if projectConfig, ok := cfg.Projects[project]; ok {
 			if repository, err := url.Parse(projectConfig.Repository); err == nil {
 				name := strings.TrimSuffix(strings.Trim(repository.Path, "/"), ".git")
@@ -85,10 +89,16 @@ func registerDetail(mux *http.ServeMux, cfg config.Config, load func(string, int
 				data.URL = url
 			}
 		}
+		if !liveActionsAvailable(env) {
+			data.URL = ""
+		}
+		if data.RepositoryURL != "" && commitOID(env.ActiveCommit) {
+			data.ArchivedCommitURL = data.RepositoryURL + "/commit/" + env.ActiveCommit
+		}
 		for _, attempt := range slices.Backward(env.Attempts) {
-			item := detailAttempt{Attempt: attempt, LiveLogs: liveLogsAvailable(env) && hasLogs(attempt), Diagnostic: env.Diagnostics[attempt.ID]}
-			if data.IssueTitle == "" {
-				data.IssueTitle = attempt.IssueTitle
+			item := detailAttempt{Attempt: attempt, LiveLogs: liveActionsAvailable(env) && hasLogs(attempt), Diagnostic: env.Diagnostics[attempt.ID]}
+			if data.RepositoryURL != "" && commitOID(attempt.Commit) {
+				item.CommitURL = data.RepositoryURL + "/commit/" + attempt.Commit
 			}
 			if env.ActiveDeploymentID != "" && attempt.ID == env.ActiveDeploymentID {
 				data.Active = &item

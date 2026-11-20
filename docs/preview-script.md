@@ -41,6 +41,10 @@ health, and publishes it at the stable URL for the Intent.
    {"project":"myproject","intent":123,"commit":"0123456789abcdef0123456789abcdef01234567"}
    ```
 
+   Clients can include an optional `issue_title` string to show the full Intent name
+   even when the controller has no GitHub metadata access. If the project enables
+   the preview inspector, this submitted title is also visible to preview visitors.
+
 3. On HTTP 202, print the response's deployment `id` and stable preview `url`.
    The response's `queued` status means the request was accepted for asynchronous
    deployment. On a request failure, exit nonzero and report the HTTP status and

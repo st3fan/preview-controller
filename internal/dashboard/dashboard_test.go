@@ -26,7 +26,7 @@ func TestDashboard(t *testing.T) {
 	mux := http.NewServeMux()
 	projects := map[string]config.Project{"alpha": {Repository: "https://github.com/example/alpha.git"}}
 	monitor := health.New(store, projects, func(context.Context, int, string) error { return nil })
-	Register(mux, shutdown, projects, store.List, store.Changes, monitor)
+	Register(mux, shutdown, config.Config{Projects: projects}, store.List, store.Changes, monitor)
 	server := httptest.NewUnstartedServer(mux)
 	server.Config.WriteTimeout = 100 * time.Millisecond
 	server.Start()
@@ -37,10 +37,11 @@ func TestDashboard(t *testing.T) {
 
 	page := readPage(t, client, server.URL+"/", http.StatusOK)
 	requireText(t, page, "No preview environments yet.", `sse-connect="/dashboard/events"`, `sse-swap="environments"`)
-	for _, name := range []string{"htmx-2.0.11.min.js", "sse-2.2.4.js", "dashboard.css", "theme.js"} {
+	for _, name := range []string{"htmx-2.0.11.min.js", "sse-2.2.4.js", "dashboard.css", "theme.js", "bootstrap-reboot-5.3.8.min.css"} {
 		requireText(t, page, "/dashboard/assets/"+name)
 		readPage(t, client, server.URL+"/dashboard/assets/"+name, http.StatusOK)
 	}
+	readPage(t, client, server.URL+"/dashboard/assets/icons.svg", http.StatusOK)
 	readPage(t, client, server.URL+"/missing", http.StatusNotFound)
 
 	stream, err := client.Get(server.URL + "/dashboard/events")
@@ -72,12 +73,15 @@ func TestDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	event := readEvent(t, events)
-	requireText(t, event, "<h2>alpha</h2>", "#18 Fix &lt;preview&gt; &amp; routing", env.URL, "/dashboard/previews/alpha/18", active, ">Unknown<", ">failed<", `href="/dashboard/logs/alpha/18/deployment-0123456789abcdef0123456789abcdef" target="_blank" rel="noopener">Live logs`)
+	requireText(t, event, `<span class="project">alpha</span>`, "#18 Fix &lt;preview&gt; &amp; routing", env.URL, "/dashboard/previews/alpha/18", active, ">Unknown<", ">Failed<", `href="/dashboard/logs/alpha/18/deployment-0123456789abcdef0123456789abcdef" target="_blank" rel="noopener" aria-label="Live logs for alpha #18`)
 
 	// A probe result updates the stream without any deployment state write.
 	go monitor.Run(shutdown)
 	event = readEvent(t, events)
-	requireText(t, event, ">Healthy<", "Last success", ">failed<")
+	requireText(t, event, ">Healthy<", ">Failed<")
+	if strings.Contains(event, "Last success") {
+		t.Fatal("dashboard shows the last successful health check timestamp")
+	}
 
 	env.Intent = 19
 	env.Attempts = nil
@@ -88,7 +92,7 @@ func TestDashboard(t *testing.T) {
 	}
 	event = readEvent(t, events)
 	requireText(t, event, "#18", "#19")
-	if strings.Count(event, "<h2>alpha</h2>") != 1 {
+	if strings.Count(event, `<span class="project">alpha</span>`) != 1 {
 		t.Fatalf("expected one project group in %s", event)
 	}
 
@@ -99,10 +103,11 @@ func TestDashboard(t *testing.T) {
 	event = readEvent(t, events)
 	for _, body := range []string{event, readPage(t, client, server.URL+"/", http.StatusOK)} {
 		requireText(t, body,
-			`href="https://github.com/example/alpha/issues/18" target="_blank" rel="noopener">#18 Fix &lt;preview&gt; &amp; routing</a>`,
-			`href="https://github.com/example/alpha/issues/19" target="_blank" rel="noopener">#19</a>`,
-			`href="https://github.com/example/alpha/commit/`+active+`" target="_blank" rel="noopener"><code title="`+active+`">0123456</code></a>`,
-			`<td>None</td>`, `<th scope="row">#20</th>`, `<td><code title="`+active+`">0123456</code></td>`,
+			`href="/dashboard/previews/alpha/18">#18 Fix &lt;preview&gt; &amp; routing</a>`,
+			`href="https://github.com/example/alpha/issues/18" target="_blank" rel="noopener"`,
+			`href="https://github.com/example/alpha/issues/19" target="_blank" rel="noopener"`,
+			`href="https://github.com/example/alpha/commit/`+active+`" target="_blank" rel="noopener"><code title="`+active+`">0123456</code>`,
+			"None", `href="/dashboard/previews/legacy/20">#20</a>`, `<code title="`+active+`">0123456</code>`,
 		)
 		for _, sensitive := range []string{"private command output", "/private/workspace"} {
 			if strings.Contains(body, sensitive) {
@@ -127,16 +132,19 @@ func TestDashboard(t *testing.T) {
 func TestArchivedDashboardRow(t *testing.T) {
 	mux := http.NewServeMux()
 	deadline := time.Date(2026, time.November, 27, 19, 0, 0, 0, time.UTC)
-	Register(mux, context.Background(), nil, func() ([]state.Environment, error) {
+	const archivedCommit = "0123456789abcdef0123456789abcdef01234567"
+	projects := map[string]config.Project{"demo": {Repository: "https://github.com/example/demo.git"}}
+	Register(mux, context.Background(), config.Config{Projects: projects}, func() ([]state.Environment, error) {
 		return []state.Environment{{
-			Project: "demo", Intent: 45, DeleteAt: &deadline,
-			URL: "https://demo-45.preview.example.com",
+			Project: "demo", Intent: 45, DeleteAt: &deadline, ActiveCommit: archivedCommit,
+			Attempts: []state.Attempt{{Commit: strings.Repeat("f", 40), Status: state.Failed}},
+			URL:      "https://demo-45.preview.example.com",
 		}}, nil
 	}, nil, health.New(nil, nil, nil))
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
-	requireText(t, body, "<h2>Archived</h2>", "/demo/45/restore", "/demo/45/delete", "Nov 27, 2026 19:00 UTC")
+	requireText(t, body, "<h2>Archived</h2>", "<dt>Archived commit</dt>", "https://github.com/example/demo/commit/"+archivedCommit, ">Offline<", ">Failed<", "/demo/45/restore", "/demo/45/delete", "Nov 27, 2026 19:00 UTC")
 	if strings.Contains(body, "Open preview") || strings.Contains(body, "/demo/45/archive") {
 		t.Fatalf("archived row exposes active actions: %s", body)
 	}
@@ -144,7 +152,7 @@ func TestArchivedDashboardRow(t *testing.T) {
 
 func TestUnavailableDashboard(t *testing.T) {
 	mux := http.NewServeMux()
-	Register(mux, t.Context(), nil, func() ([]state.Environment, error) {
+	Register(mux, t.Context(), config.Config{}, func() ([]state.Environment, error) {
 		return nil, errors.New("private state path")
 	}, nil, health.New(nil, nil, nil))
 	page := httptest.NewRecorder()
@@ -196,4 +204,82 @@ func requireText(t *testing.T, body string, snippets ...string) {
 			t.Fatalf("expected %q in %s", snippet, body)
 		}
 	}
+}
+
+func TestControllerBuildLinks(t *testing.T) {
+	revision, release := buildRevision, buildRelease
+	t.Cleanup(func() { buildRevision, buildRelease = revision, release })
+	buildRevision = "0123456789abcdef0123456789abcdef01234567"
+	buildRelease = ""
+	if got := controllerBuild(); got != (buildIdentity{"0123456", controllerRepository}) {
+		t.Fatalf("development identity: %+v", got)
+	}
+	buildRelease = "v1.2.3"
+	if got := controllerBuild(); got != (buildIdentity{"v1.2.3 / 0123456", controllerRepository + "/releases/tag/v1.2.3"}) {
+		t.Fatalf("release identity: %+v", got)
+	}
+}
+
+func TestDashboardBackfillsMissingTitles(t *testing.T) {
+	ctx, stop := context.WithCancel(t.Context())
+	defer stop()
+	store, err := state.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects := map[string]config.Project{"demo": {Repository: "https://github.com/example/repo.git/"}}
+	archived := time.Now()
+	for _, e := range []state.Environment{
+		{Project: "demo", Intent: 12},
+		{Project: "demo", Intent: 13, Attempts: []state.Attempt{{IssueTitle: "Submitted title"}, {}}},
+		{Project: "removed", Intent: 14},
+	} {
+		e.ID = state.ID(e.Project, e.Intent)
+		if err := store.Save(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	titles := newIssueTitles()
+	mux := http.NewServeMux()
+	registerDashboard(mux, ctx, projects, store.List, store.Changes, health.New(store, projects, nil), titles)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := server.Client()
+	client.Timeout = 4 * time.Second
+	stream, err := client.Get(server.URL + "/dashboard/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	events := bufio.NewScanner(stream.Body)
+	requireText(t, readEvent(t, events), "#12</a>", "#13 Submitted title", "#14</a>")
+	alreadyFetched := false
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		titles.run(ctx, projects, store.List, store.Changes, func(_ context.Context, repo string, number int64) string {
+			if repo != "example/repo" || number != 12 {
+				t.Errorf("unexpected title lookup: %s #%d", repo, number)
+				return ""
+			}
+			if alreadyFetched {
+				t.Error("repeated title lookup")
+			}
+			alreadyFetched = true
+			return "A <real> title"
+		})
+	}()
+	defer func() { stop(); <-done }()
+	requireText(t, readEvent(t, events), "#12 A &lt;real&gt; title", "#13 Submitted title")
+	requireText(t, readPage(t, client, server.URL+"/", http.StatusOK), "#12 A &lt;real&gt; title", "#14</a>")
+	// Archiving preserves the cached title.
+	if err := store.Save(state.Environment{ID: state.ID("demo", 12), Project: "demo", Intent: 12, DeleteAt: &archived}); err != nil {
+		t.Fatal(err)
+	}
+	requireText(t, readEvent(t, events), "<h2>Archived</h2>", "#12 A &lt;real&gt; title")
+	// A later submission overrides the fallback on the live dashboard.
+	if err := store.Save(state.Environment{ID: state.ID("demo", 12), Project: "demo", Intent: 12, Attempts: []state.Attempt{{IssueTitle: "New submitted title"}}}); err != nil {
+		t.Fatal(err)
+	}
+	requireText(t, readEvent(t, events), "#12 New submitted title")
 }
