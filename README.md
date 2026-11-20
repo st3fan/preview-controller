@@ -32,6 +32,11 @@ The `preview_listen` address is a separate listener for Caddy. See
 PREVIEW_SERVER_TOKEN='replace-with-a-secret' ./preview-server -config /etc/preview-server.json
 ```
 
+Add `-verbose` to the server command to log startup reconciliation, deployment
+progress, health checks, route switches, and cleanup. Use the deployment ID
+to correlate those messages with the status API. Verbose logs omit Compose
+output and variable values.
+
 The controller writes one atomic JSON file per environment at
 `<state-root>/<project>/<intent>.json`. It records attempts and errors there.
 Docker is the source of runtime container state.

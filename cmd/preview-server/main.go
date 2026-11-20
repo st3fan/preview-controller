@@ -23,7 +23,11 @@ import (
 
 func main() {
 	settings := flag.String("config", config.DefaultPath, "path to global settings JSON")
+	verbose := flag.Bool("verbose", false, "log controller activity and deployment progress")
 	flag.Parse()
+	if *verbose {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	}
 	if err := run(*settings); err != nil {
 		slog.Error("preview server stopped", "error", err)
 		os.Exit(1)
@@ -86,6 +90,7 @@ func run(settings string) error {
 	case <-ctx.Done():
 	case serveErr = <-errorsFromServers:
 	}
+	slog.Debug("shutting down preview server")
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := management.Shutdown(shutdown); err != nil {

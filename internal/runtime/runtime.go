@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -69,6 +70,7 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 	if !attemptID.MatchString(attempt.ID) || intent < 1 {
 		return Result{}, errors.New("invalid deployment identity")
 	}
+	logger := slog.With("deployment", attempt.ID)
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 	result.ComposeProject = "pv" + strings.TrimPrefix(attempt.ID, "deployment-")
@@ -79,6 +81,7 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 	}
 	defer func() {
 		if err != nil {
+			logger.Debug("cleaning up failed candidate")
 			cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer done()
 			if cleanupErr := r.Cleanup(cleanup, projectName, intent, attempt); cleanupErr != nil {
@@ -86,6 +89,7 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 			}
 		}
 	}()
+	logger.Debug("cloning candidate repository")
 	repo, err := git.PlainCloneContext(ctx, checkout, &git.CloneOptions{URL: cfg.Repository, SingleBranch: false})
 	if err != nil {
 		return result, fmt.Errorf("clone public repository: %w", err)
@@ -104,6 +108,7 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 	if err := worktree.Checkout(&git.CheckoutOptions{Hash: hash, Force: true}); err != nil {
 		return result, fmt.Errorf("checkout exact commit: %w", err)
 	}
+	logger.Debug("checking candidate Compose configuration")
 	sourceCompose := filepath.Join(checkout, cfg.ComposeFile)
 	targetPort := cfg.ContainerPort()
 	content, err := prepareCompose(sourceCompose, checkout, cfg.PublicService, targetPort)
@@ -126,6 +131,7 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 	runCompose := func(limit int, command ...string) (string, error) {
 		return r.runDocker(ctx, limit, len(cfg.ComposeEnvFrom) > 0, append(args, command...)...)
 	}
+	logger.Debug("rendering candidate Compose configuration")
 	output, err := runCompose(2<<20, "config", "--format", "json")
 	if err != nil {
 		return result, fmt.Errorf("resolve Compose configuration: %w", err)
@@ -133,12 +139,14 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 	if err := validateResolved([]byte(output), cfg.PublicService, targetPort, checkout); err != nil {
 		return result, fmt.Errorf("resolved Compose policy: %w", err)
 	}
+	logger.Debug("building Compose stack")
 	if _, err := runCompose(2<<20, "build"); err != nil {
 		return result, fmt.Errorf("build Compose stack: %w", err)
 	}
 	if err := progress(state.Starting, result); err != nil {
 		return result, err
 	}
+	logger.Debug("starting Compose stack")
 	if _, err := runCompose(2<<20, "up", "-d", "--no-build", "--wait", "--wait-timeout", "180"); err != nil {
 		return result, fmt.Errorf("start Compose stack: %w", err)
 	}
@@ -157,6 +165,7 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 	if err := progress(state.Starting, result); err != nil {
 		return result, err
 	}
+	logger.Debug("probing public service", "port", result.Port)
 	if err := r.probe(ctx, result.Port, cfg.HealthPath); err != nil {
 		return result, err
 	}
