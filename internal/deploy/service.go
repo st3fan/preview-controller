@@ -335,19 +335,34 @@ func (s *Service) activate(project string, intent int64, candidate state.Attempt
 }
 
 func (s *Service) ActivePort(project string, intent int64) (int, error) {
-	env, err := s.store.Load(project, intent)
-	if err != nil {
-		return 0, err
-	}
-	if env.Deleting || env.ActiveDeploymentID == "" {
+	port, _, err := s.PreviewRoute(project, intent)
+	if err == nil && port == 0 {
 		return 0, state.ErrNotFound
 	}
-	for _, attempt := range env.Attempts {
-		if attempt.ID == env.ActiveDeploymentID && attempt.Status == state.Healthy && attempt.Port > 0 && attempt.Port <= 65535 {
-			return attempt.Port, nil
-		}
+	return port, err
+}
+
+// PreviewRoute resolves the active target and fallback status from the same snapshot.
+func (s *Service) PreviewRoute(project string, intent int64) (int, state.Status, error) {
+	env, err := s.store.Load(project, intent)
+	if err != nil {
+		return 0, "", err
 	}
-	return 0, state.ErrNotFound
+	if env.Deleting {
+		return 0, "", state.ErrNotFound
+	}
+	if env.ActiveDeploymentID != "" {
+		for _, attempt := range env.Attempts {
+			if attempt.ID == env.ActiveDeploymentID && attempt.Status == state.Healthy && attempt.Port > 0 && attempt.Port <= 65535 {
+				return attempt.Port, "", nil
+			}
+		}
+		return 0, "", state.ErrNotFound
+	}
+	if len(env.Attempts) > 0 {
+		return 0, env.Attempts[len(env.Attempts)-1].Status, nil
+	}
+	return 0, "", state.ErrNotFound
 }
 
 func (s *Service) DeleteEnvironment(id string) error {

@@ -3,6 +3,7 @@ package ingress
 import (
 	"errors"
 	"fmt"
+	"html/template"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -15,7 +16,7 @@ import (
 )
 
 type Router interface {
-	ActivePort(string, int64) (int, error)
+	PreviewRoute(string, int64) (int, state.Status, error)
 }
 
 type handler struct {
@@ -34,7 +35,11 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	port, err := h.router.ActivePort(project, intent)
+	port, status, err := h.router.PreviewRoute(project, intent)
+	if err == nil && port == 0 {
+		serveStatus(w, status)
+		return
+	}
 	if errors.Is(err, state.ErrNotFound) {
 		http.Error(w, "preview is not available", http.StatusServiceUnavailable)
 		return
@@ -83,4 +88,52 @@ func (h *handler) parseHost(host string) (string, int64, bool) {
 		return "", 0, false
 	}
 	return project, intent, true
+}
+
+var statusPage = template.Must(template.New("preview status").Parse(`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{{if .Refresh}}<meta http-equiv="refresh" content="3">{{end}}
+<title>{{.Title}}</title>
+</head>
+<body>
+<main>
+<h1>{{.Title}}</h1>
+<p>{{.Message}}</p>
+</main>
+</body>
+</html>
+`))
+
+func serveStatus(w http.ResponseWriter, status state.Status) {
+	page := struct {
+		Title, Message string
+		Refresh        bool
+	}{Title: "Preview deployment in progress", Refresh: true}
+	switch status {
+	case state.Queued:
+		page.Message = "Queued for deployment."
+	case state.Fetching:
+		page.Message = "Fetching source code."
+	case state.Verified:
+		page.Message = "Source verified."
+	case state.Building:
+		page.Message = "Building the preview."
+	case state.Starting:
+		page.Message = "Starting the preview and checking its health."
+	case state.Failed:
+		page.Title = "Preview deployment failed"
+		page.Message = "The preview will be available after a successful deployment."
+		page.Refresh = false
+	default:
+		http.Error(w, "preview is not available", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = statusPage.Execute(w, page)
 }

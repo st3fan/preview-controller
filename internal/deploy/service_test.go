@@ -435,3 +435,41 @@ func TestExistingDeploymentUsesProjectFirstURL(t *testing.T) {
 		t.Fatalf("active port = %d, %v", port, err)
 	}
 }
+
+func TestPreviewRouteUsesLatestAttemptUntilCutover(t *testing.T) {
+	store, err := state.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Service{store: store}
+	env := state.Environment{
+		ID: state.ID("myproject", 9), Project: "myproject", Intent: 9,
+		Attempts: []state.Attempt{
+			{ID: "first", Status: state.Failed, Error: "private failure detail"},
+			{ID: "retry", Status: state.Building},
+		},
+	}
+	check := func(wantPort int, wantStatus state.Status) {
+		t.Helper()
+		if err := store.Save(env); err != nil {
+			t.Fatal(err)
+		}
+		port, status, err := s.PreviewRoute(env.Project, env.Intent)
+		if err != nil || port != wantPort || status != wantStatus {
+			t.Fatalf("route = %d, %q, %v; want %d, %q", port, status, err, wantPort, wantStatus)
+		}
+	}
+	check(0, state.Building)
+	env.Attempts[1].Status = state.Failed
+	check(0, state.Failed)
+
+	env.Attempts[1].Status = state.Healthy
+	env.Attempts[1].Port = 12345
+	env.ActiveDeploymentID = "retry"
+	check(12345, "")
+
+	env.Attempts = append(env.Attempts, state.Attempt{ID: "replacement", Status: state.Building})
+	check(12345, "")
+	env.Attempts[2].Status = state.Failed
+	check(12345, "")
+}
