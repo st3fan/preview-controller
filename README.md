@@ -43,7 +43,9 @@ Docker is the source of runtime container state.
 
 ## Deployment API
 
-The management API is restricted to the configured home-lab listener.
+The management API and read-only dashboard are restricted to the configured home-lab listener.
+Open `/` on that listener to see preview links, active commits, and live deployment
+status grouped by project.
 Candidate requests require a full 40-character commit SHA and the bearer
 secret. The authenticated request is the approval to preview that commit.
 
