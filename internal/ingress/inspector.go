@@ -25,13 +25,14 @@ var inspectorTemplate = template.Must(template.New("preview inspector").Parse(
 const maxInspectorDocument = 2 << 20
 
 type inspectorDetails struct {
-	Commit, CommitURL, Issue, IssueURL, LogsURL string
+	Repository, Commit, CommitURL, Issue, IssueURL, LogsURL string
 }
 
 func inspectorData(repository, dashboardOrigin, project string, intent int64, attempt state.Attempt) inspectorDetails {
 	repository = strings.TrimSuffix(strings.TrimRight(repository, "/"), ".git")
 	details := inspectorDetails{
-		Commit: attempt.Commit, CommitURL: repository + "/commit/" + url.PathEscape(attempt.Commit),
+		Repository: repository,
+		Commit:     attempt.Commit, CommitURL: repository + "/commit/" + url.PathEscape(attempt.Commit),
 		Issue: fmt.Sprintf("#%d", intent), IssueURL: fmt.Sprintf("%s/issues/%d", repository, intent),
 	}
 	if attempt.IssueTitle != "" {
