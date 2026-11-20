@@ -60,8 +60,8 @@ Content-Type: application/json
 The API returns HTTP 202 with a deployment ID, `queued` status, and a stable
 URL such as `https://myproject-123.preview.example.com`. Verification proceeds
 asynchronously. Read status through `GET /api/deployments/{id}`,
-`GET /api/environments`, and `GET /api/environments/{project:intent}`.
-An authenticated `DELETE /api/environments/{project:intent}` removes a preview.
+`GET /api/environments`, and `GET /api/environments/{project}/{intent}`.
+An authenticated `DELETE /api/environments/{project}/{intent}` removes a preview.
 If Docker cleanup fails, the route remains removed and the deletion can be
 retried with the same request.
 
