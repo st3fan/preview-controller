@@ -54,6 +54,8 @@ volumes:
 		name, body string
 	}{
 		{"privileged", "services:\n  web:\n    image: alpine\n    privileged: true\n"},
+		{"host network", "services:\n  web:\n    image: alpine\n    network_mode: host\n"},
+		{"Docker socket mount", "services:\n  web:\n    image: alpine\n    volumes: ['/var/run/docker.sock:/var/run/docker.sock']\n"},
 		{"provider", "services:\n  web:\n    image: alpine\n    provider:\n      type: dangerous\n"},
 		{"include", "include: /etc/secret.yaml\nservices:\n  web:\n    image: alpine\n"},
 		{"interpolated build path", "services:\n  web:\n    build: ${BUILD_CONTEXT}\n"},
