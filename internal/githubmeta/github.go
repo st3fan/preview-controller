@@ -25,11 +25,19 @@ const query = `query($owner: String!, $repo: String!, $number: Int!) {
   }
 }
 fragment IssueFields on Issue {
-  number title state repository { nameWithOwner }
+  number title state createdAt repository { nameWithOwner }
   closedByPullRequestsReferences(first: 20, includeClosedPrs: true) {
     pageInfo { hasNextPage }
     nodes {
-      number title state
+      number title state createdAt mergedAt
+      reviews(last: 10) {
+        pageInfo { hasPreviousPage }
+        nodes { submittedAt url }
+      }
+      commits(last: 10) {
+        pageInfo { hasPreviousPage }
+        nodes { commit { oid committedDate } }
+      }
       baseRefName headRefName
       baseRepository { nameWithOwner }
       headRepository { nameWithOwner }
@@ -63,7 +71,7 @@ type repository struct {
 }
 
 type connection[T any] struct {
-	PageInfo struct{ HasNextPage bool }
+	PageInfo struct{ HasNextPage, HasPreviousPage bool }
 	Nodes    []*T
 }
 
@@ -71,14 +79,31 @@ type Issue struct {
 	Number                         int64
 	Title                          string
 	State                          string
+	CreatedAt                      time.Time
 	Repository                     repository
 	ClosedByPullRequestsReferences *connection[Pull]
+}
+
+type Review struct {
+	SubmittedAt *time.Time
+	URL         string
+}
+
+type PullCommit struct {
+	Commit struct {
+		OID           string
+		CommittedDate time.Time
+	}
 }
 
 type Pull struct {
 	Number         int64
 	Title          string
 	State          string
+	CreatedAt      time.Time
+	MergedAt       *time.Time
+	Reviews        *connection[Review]
+	Commits        *connection[PullCommit]
 	BaseRefName    string
 	HeadRefName    string
 	BaseRepository repository

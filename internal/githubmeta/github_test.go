@@ -38,9 +38,11 @@ func TestLookup(t *testing.T) {
 				}
 				w.WriteHeader(tc.status)
 				fmt.Fprintf(w, `{"data":{"repository":{"issue":{
-					"number":51,"title":"Intent title","state":"OPEN","repository":{"nameWithOwner":"example/repo"},
+					"number":51,"title":"Intent title","state":"OPEN","createdAt":"2026-11-20T12:00:00Z","repository":{"nameWithOwner":"example/repo"},
 					"closedByPullRequestsReferences":{"nodes":[
-						{"number":10,"title":"Upper","state":"OPEN","baseRefName":%q,"headRefName":"upper","baseRepository":{"nameWithOwner":"example/repo"},"headRepository":{"nameWithOwner":"example/repo"}}
+						{"number":10,"title":"Upper","state":"OPEN","baseRefName":%q,"headRefName":"upper","createdAt":"2026-11-20T12:01:00Z",
+						 "reviews":{"pageInfo":{"hasPreviousPage":true},"nodes":[{"submittedAt":"2026-11-20T12:03:00Z","url":"https://github.com/example/repo/pull/10#pullrequestreview-42"}]},
+						 "commits":{"nodes":[{"commit":{"oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","committedDate":"2026-11-20T12:02:00Z"}}]},"baseRepository":{"nameWithOwner":"example/repo"},"headRepository":{"nameWithOwner":"example/repo"}}
 					]},
 					"subIssues":{"pageInfo":{"hasNextPage":%t},"nodes":[
 						{"number":52,"title":"Related issue","state":"CLOSED","repository":{"nameWithOwner":"example/repo"},"closedByPullRequestsReferences":{"nodes":[
@@ -62,10 +64,18 @@ func TestLookup(t *testing.T) {
 				}
 				return
 			}
-			if got.Intent == nil || got.Intent.Title != "Intent title" || len(got.Related) != 1 ||
+			if got.Intent == nil || got.Intent.Title != "Intent title" || got.Intent.CreatedAt.IsZero() || len(got.Related) != 1 ||
 				got.Related[0].Number != 52 || len(got.Pulls) != 2 || got.Pulls[0].Number != tc.first ||
 				got.Ordered != tc.ordered || got.Partial != tc.partial {
 				t.Fatalf("unexpected metadata: %+v", got)
+			}
+			for _, pr := range got.Pulls {
+				if pr.Number == 10 && (pr.CreatedAt.IsZero() ||
+					pr.Reviews == nil || !pr.Reviews.PageInfo.HasPreviousPage || len(pr.Reviews.Nodes) != 1 ||
+					pr.Reviews.Nodes[0].SubmittedAt == nil || pr.Reviews.Nodes[0].URL == "" ||
+					pr.Commits == nil || len(pr.Commits.Nodes) != 1 || pr.Commits.Nodes[0].Commit.CommittedDate.IsZero()) {
+					t.Fatalf("unexpected PR activity: %+v", pr)
+				}
 			}
 		})
 	}

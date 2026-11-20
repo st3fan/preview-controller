@@ -42,7 +42,7 @@
       {{else}}<p>No linked pull requests.</p>{{end}}
       {{if $.GitHub.Partial}}<p>GitHub returned incomplete results.</p>{{end}}
       {{else}}<p>GitHub metadata unavailable.</p>{{end}}
-      <p><a href="#activity">Deployment activity</a></p>
+      <p><a href="#activity">Activity timeline</a></p>
     </section>
     {{end}}
     {{$project := .Project}}{{$intent := .Intent}}
@@ -55,10 +55,24 @@
       {{template "attempt-timing" .}}
       {{else}}<p>No active deployment.</p>{{end}}
     </section>
+    <section aria-labelledby="activity">
+      <h2 id="activity">Activity timeline</h2>
+      {{if not .GitHubEnabled}}<p>GitHub activity is disabled.</p>
+      {{else if not .GitHub.Intent}}<p>GitHub activity is unavailable.</p>
+      {{else if .ActivityPartial}}<p>GitHub activity is incomplete.</p>{{end}}
+      {{if .DeploymentActivityPartial}}<p>Controller deployment activity is incomplete.</p>{{end}}
+      {{if .Activity}}
+      <ol>
+        {{range .Activity}}
+        <li>{{template "attempt-time" .At}} · {{.Source}} · {{if .URL}}<a href="{{.URL}}">{{.Label}}</a>{{else}}{{.Label}}{{end}}{{with .Detail}} · {{.}}{{end}}</li>
+        {{end}}
+      </ol>
+      {{else}}<p>No recorded activity.</p>{{end}}
+    </section>
     <section>
-      <h2 id="activity">Recent attempts</h2>
+      <h2>Recent attempts</h2>
       {{range .Recent}}
-      <article>
+      <article id="attempt-{{.ID}}">
         <p>{{template "attempt-summary" .}}
           {{if .LiveLogs}} · <a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}" target="_blank" rel="noopener">Live logs</a>{{end}}
         </p>
