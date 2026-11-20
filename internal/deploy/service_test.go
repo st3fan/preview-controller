@@ -449,27 +449,32 @@ func TestPreviewRouteUsesLatestAttemptUntilCutover(t *testing.T) {
 			{ID: "retry", Status: state.Building},
 		},
 	}
-	check := func(wantPort int, wantStatus state.Status) {
+	check := func(wantPort int, wantStatus state.Status, wantTitle string) {
 		t.Helper()
 		if err := store.Save(env); err != nil {
 			t.Fatal(err)
 		}
-		port, status, err := s.PreviewRoute(env.Project, env.Intent)
+		attempt, status, err := s.PreviewDeployment(env.Project, env.Intent)
+		port := attempt.Port
 		if err != nil || port != wantPort || status != wantStatus {
 			t.Fatalf("route = %d, %q, %v; want %d, %q", port, status, err, wantPort, wantStatus)
 		}
+		if attempt.IssueTitle != wantTitle {
+			t.Fatalf("title = %q; want %q", attempt.IssueTitle, wantTitle)
+		}
 	}
-	check(0, state.Building)
+	check(0, state.Building, "")
 	env.Attempts[1].Status = state.Failed
-	check(0, state.Failed)
+	check(0, state.Failed, "")
 
 	env.Attempts[1].Status = state.Healthy
 	env.Attempts[1].Port = 12345
 	env.ActiveDeploymentID = "retry"
-	check(12345, "")
+	env.Attempts[1].IssueTitle = "Active ticket"
+	check(12345, "", "Active ticket")
 
-	env.Attempts = append(env.Attempts, state.Attempt{ID: "replacement", Status: state.Building})
-	check(12345, "")
+	env.Attempts = append(env.Attempts, state.Attempt{ID: "replacement", Status: state.Building, IssueTitle: "Replacement title"})
+	check(12345, "", "Active ticket")
 	env.Attempts[2].Status = state.Failed
-	check(12345, "")
+	check(12345, "", "Active ticket")
 }

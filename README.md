@@ -152,6 +152,26 @@ up; existing stacks are left running. After a successful route switch, the
 previous stack is removed. The preview listener accepts only configured stable
 hostnames and proxies only to the active attempt's recorded loopback port.
 
+## Preview inspector
+
+Set `"preview_inspector": true` in a project's controller settings to enable
+the π button. The panel links to the exact deployed commit and GitHub Intent
+Issue. To show the issue title, include the optional `issue_title` string in the
+authenticated deployment request. Supply it only when the title can be shown to
+preview visitors. Submissions without it show the issue number alone.
+
+Set the optional top-level `dashboard_origin` to the browser-reachable origin
+of your existing operator dashboard (for example, `https://operator.example.com`).
+When live logs are available for the active attempt, the inspector links to that
+attempt's logs through the existing operator listener. Keep its existing network
+and access restrictions in place.
+
+The inspector applies to top-level browser navigations with Fetch Metadata
+headers and successful HTML responses with a known length of at most 2 MiB.
+Streamed, compressed, downloadable, and partial responses pass through.
+The application's Content Security Policy still applies. Policies that block
+inline scripts or styles can prevent the inspector from appearing or styling itself.
+
 ## Compose preview contract
 
 To add a project-side `preview.sh`, follow the [preview script guide](docs/preview-script.md).

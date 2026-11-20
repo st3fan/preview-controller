@@ -11,10 +11,14 @@ import (
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
-type stubService struct{ submits, deletes int }
+type stubService struct {
+	submits, deletes int
+	issueTitle       string
+}
 
-func (s *stubService) Submit(project string, intent int64, commit string) (state.Attempt, state.Environment, error) {
+func (s *stubService) SubmitWithIssueTitle(project string, intent int64, commit, title string) (state.Attempt, state.Environment, error) {
 	s.submits++
+	s.issueTitle = title
 	return state.Attempt{ID: "deployment-1", Status: state.Queued}, state.Environment{ID: state.ID(project, intent), URL: "https://myproject-123.preview.example.com"}, nil
 }
 func (s *stubService) ListEnvironments() ([]state.Environment, error) {
@@ -74,7 +78,7 @@ func TestLegacyEnvironmentRoutesAreAbsent(t *testing.T) {
 func TestDeploymentRequestAuthenticationAndResponse(t *testing.T) {
 	service := &stubService{}
 	handler := Handler(service, "shared-secret")
-	request := []byte(`{"project":"myproject","intent":123,"commit":"` + strings.Repeat("a", 40) + `"}`)
+	request := []byte(`{"project":"myproject","intent":123,"commit":"` + strings.Repeat("a", 40) + `","issue_title":"My ticket"}`)
 	for _, header := range []string{"", "Bearer wrong", "Bearer shared-secret extra"} {
 		r := httptest.NewRequest(http.MethodPost, "/api/deployments", bytes.NewReader(request))
 		r.Header.Set("Authorization", header)
@@ -92,6 +96,9 @@ func TestDeploymentRequestAuthenticationAndResponse(t *testing.T) {
 	handler.ServeHTTP(w, r)
 	if w.Code != http.StatusAccepted || service.submits != 1 {
 		t.Fatalf("accepted status %d, submits %d: %s", w.Code, service.submits, w.Body.String())
+	}
+	if service.issueTitle != "My ticket" {
+		t.Fatalf("submitted issue title = %q", service.issueTitle)
 	}
 	var response struct{ ID, Status, URL string }
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {

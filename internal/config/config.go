@@ -25,6 +25,7 @@ var (
 
 // Config contains operator settings. Deployment state is stored separately.
 type Config struct {
+	DashboardOrigin    string             `json:"dashboard_origin,omitempty"`
 	ManagementListen   string             `json:"management_listen"`
 	PreviewListen      string             `json:"preview_listen"`
 	PreviewDomain      string             `json:"preview_domain"`
@@ -36,13 +37,14 @@ type Config struct {
 }
 
 type Project struct {
-	Repository     string            `json:"repository"`
-	ComposeFile    string            `json:"compose_file"`
-	PublicService  string            `json:"public_service"`
-	PublicPort     int               `json:"public_port"`
-	HealthPath     string            `json:"health_path"`
-	ComposeEnv     map[string]string `json:"compose_env,omitempty"`
-	ComposeEnvFrom map[string]string `json:"compose_env_from,omitempty"`
+	PreviewInspector bool              `json:"preview_inspector,omitempty"`
+	Repository       string            `json:"repository"`
+	ComposeFile      string            `json:"compose_file"`
+	PublicService    string            `json:"public_service"`
+	PublicPort       int               `json:"public_port"`
+	HealthPath       string            `json:"health_path"`
+	ComposeEnv       map[string]string `json:"compose_env,omitempty"`
+	ComposeEnvFrom   map[string]string `json:"compose_env_from,omitempty"`
 }
 
 func Load(filename string) (Config, error) {
@@ -80,6 +82,15 @@ func Load(filename string) (Config, error) {
 func (c Config) Token() string { return c.token }
 
 func (c Config) Validate() error {
+	if c.DashboardOrigin != "" {
+		origin, err := url.Parse(c.DashboardOrigin)
+		if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") ||
+			origin.Hostname() == "" || origin.User != nil || origin.Path != "" ||
+			origin.ForceQuery || origin.RawQuery != "" || origin.Fragment != "" ||
+			origin.String() != origin.Scheme+"://"+origin.Host {
+			return errors.New("dashboard_origin must be an HTTP or HTTPS origin")
+		}
+	}
 	if err := validateListener(c.ManagementListen, "management_listen"); err != nil {
 		return err
 	}
