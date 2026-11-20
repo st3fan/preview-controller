@@ -367,12 +367,10 @@ func (s *Service) PreviewDeployment(project string, intent int64) (state.Attempt
 	if env.Deleting || env.DeleteAt != nil || env.LifecycleOperation != "" {
 		return state.Attempt{}, "", state.ErrNotFound
 	}
+	if attempt, ok := env.ActivePreview(); ok {
+		return attempt, "", nil
+	}
 	if env.ActiveDeploymentID != "" {
-		for _, attempt := range env.Attempts {
-			if attempt.ID == env.ActiveDeploymentID && attempt.Status == state.Healthy && attempt.Port > 0 && attempt.Port <= 65535 {
-				return attempt, "", nil
-			}
-		}
 		return state.Attempt{}, "", state.ErrNotFound
 	}
 	if len(env.Attempts) > 0 {

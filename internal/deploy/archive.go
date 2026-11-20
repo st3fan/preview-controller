@@ -66,6 +66,9 @@ func (s *Service) claimLifecycle(id, operation string, due *time.Time) (state.En
 				return state.Environment{}, 0, ErrConflict
 			}
 		}
+		if operation == archiving {
+			env.Attempts[i].UpdatedAt = time.Now().UTC()
+		}
 		env.LifecycleOperation = operation
 		if err := s.store.Save(env); err != nil {
 			return state.Environment{}, 0, err
@@ -115,6 +118,7 @@ func (s *Service) changeLifecycle(id, operation string, due *time.Time) error {
 			cancel()
 			if err == nil {
 				attempt.Port = port
+				attempt.UpdatedAt = time.Now().UTC()
 				resetArchiveDeadline(&env, s.cfg, time.Now().UTC())
 				env.LifecycleOperation = ""
 			}

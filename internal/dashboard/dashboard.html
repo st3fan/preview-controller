@@ -56,7 +56,7 @@
   <div class="table-scroll">
     <table aria-label="preview environments">
       <thead>
-        <tr><th scope="col">Intent</th><th scope="col">Preview</th><th scope="col">Active commit</th><th scope="col">Latest deployment</th><th scope="col">Deployment logs</th><th scope="col">Schedule</th><th scope="col">Actions</th></tr>
+        <tr><th scope="col">Intent</th><th scope="col">Preview</th><th scope="col">Active commit</th><th scope="col">Active health</th><th scope="col">Latest deployment</th><th scope="col">Deployment logs</th><th scope="col">Schedule</th><th scope="col">Actions</th></tr>
       </thead>
       <tbody>
       {{range .}}
@@ -66,6 +66,11 @@
           <th scope="row">{{if .IntentURL}}<a href="{{.IntentURL}}" target="_blank" rel="noopener">{{template "intent-label" .}}</a>{{else}}{{template "intent-label" .}}{{end}}</th>
           <td>{{if .Archived}}{{$project}}{{else if or (eq .Status "archiving") (eq .Status "deleting")}}Offline{{else}}<a href="{{.URL}}">Open preview</a>{{end}}</td>
           <td>{{if .CommitURL}}<a href="{{.CommitURL}}" target="_blank" rel="noopener"><code title="{{.Commit}}">{{.ShortCommit}}</code></a>{{else if .Commit}}<code title="{{.Commit}}">{{.ShortCommit}}</code>{{else}}None{{end}}</td>
+          <td>
+            <span class="status{{if eq .Health.Status "Unhealthy"}} failed{{end}}">{{.Health.Status}}</span>
+            {{if not .Health.LastSuccess.IsZero}}<div>Last success <time datetime="{{.Health.LastSuccess.Format "2006-01-02T15:04:05Z07:00"}}">{{.Health.LastSuccess.Format "Jan 2, 2006 15:04:05 UTC"}}</time></div>{{end}}
+            {{with .Health.Failure}}<div>Latest failure: {{.}}</div>{{end}}
+          </td>
           <td>{{if .Status}}<span class="status {{.Status}}">{{.Status}}</span>{{else}}No attempts{{end}}{{with .LifecycleError}}<div>{{.}}</div>{{end}}</td>
           <td>{{range .Logs}}<div><a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}" target="_blank" rel="noopener">Live logs</a> <code>{{.ID}}</code> <span class="status {{.Status}}">{{.Status}}</span></div>{{else}}Unavailable{{end}}</td>
           <td>{{if .Deadline}}{{if .Archived}}Delete{{else}}Archive{{end}} <time datetime="{{.Deadline.Format "2006-01-02T15:04:05Z07:00"}}">{{.Deadline.Format "Jan 2, 2006 15:04 UTC"}}</time>{{end}}</td>

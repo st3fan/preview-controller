@@ -57,6 +57,19 @@ type Environment struct {
 	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
+// ActivePreview returns the deployment currently eligible to serve preview traffic.
+func (env Environment) ActivePreview() (Attempt, bool) {
+	if env.Deleting || env.DeleteAt != nil || env.LifecycleOperation != "" || env.ActiveDeploymentID == "" {
+		return Attempt{}, false
+	}
+	for _, attempt := range env.Attempts {
+		if attempt.ID == env.ActiveDeploymentID && attempt.Status == Healthy && attempt.Port > 0 && attempt.Port <= 65535 {
+			return attempt, true
+		}
+	}
+	return Attempt{}, false
+}
+
 func ID(project string, intent int64) string {
 	return fmt.Sprintf("%s:%d", project, intent)
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/st3fan/preview-controller/internal/config"
+	"github.com/st3fan/preview-controller/internal/health"
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
@@ -24,7 +25,8 @@ func TestDashboard(t *testing.T) {
 	shutdown, stop := context.WithCancel(context.Background())
 	mux := http.NewServeMux()
 	projects := map[string]config.Project{"alpha": {Repository: "https://github.com/example/alpha.git"}}
-	Register(mux, shutdown, projects, store.List, store.Changes)
+	monitor := health.New(store, projects, func(context.Context, int, string) error { return nil })
+	Register(mux, shutdown, projects, store.List, store.Changes, monitor)
 	server := httptest.NewUnstartedServer(mux)
 	server.Config.WriteTimeout = 100 * time.Millisecond
 	server.Start()
@@ -54,13 +56,14 @@ func TestDashboard(t *testing.T) {
 	// Changes after the server's normal write timeout must still be delivered.
 	time.Sleep(150 * time.Millisecond)
 	env := state.Environment{
-		ID:           state.ID("alpha", 18),
-		Project:      "alpha",
-		Intent:       18,
-		URL:          "https://alpha-18.preview.example.com",
-		ActiveCommit: active,
+		ID:                 state.ID("alpha", 18),
+		Project:            "alpha",
+		Intent:             18,
+		URL:                "https://alpha-18.preview.example.com",
+		ActiveCommit:       active,
+		ActiveDeploymentID: "deployment-0123456789abcdef0123456789abcdef",
 		Attempts: []state.Attempt{
-			{ID: "deployment-0123456789abcdef0123456789abcdef", Status: state.Healthy, IssueTitle: "Previous title", ComposeProject: "pv0123456789abcdef0123456789abcdef"},
+			{ID: "deployment-0123456789abcdef0123456789abcdef", Status: state.Healthy, Port: 8080, IssueTitle: "Previous title", ComposeProject: "pv0123456789abcdef0123456789abcdef"},
 			{Status: state.Queued, IssueTitle: "Fix <preview> & routing"},
 			{Status: state.Failed, Error: "private command output", Workspace: "/private/workspace"},
 		},
@@ -69,7 +72,12 @@ func TestDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	event := readEvent(t, events)
-	requireText(t, event, "<h2>alpha</h2>", "#18 Fix &lt;preview&gt; &amp; routing", env.URL, active, ">failed<", `href="/dashboard/logs/alpha/18/deployment-0123456789abcdef0123456789abcdef" target="_blank" rel="noopener">Live logs`)
+	requireText(t, event, "<h2>alpha</h2>", "#18 Fix &lt;preview&gt; &amp; routing", env.URL, active, ">Unknown<", ">failed<", `href="/dashboard/logs/alpha/18/deployment-0123456789abcdef0123456789abcdef" target="_blank" rel="noopener">Live logs`)
+
+	// A probe result updates the stream without any deployment state write.
+	go monitor.Run(shutdown)
+	event = readEvent(t, events)
+	requireText(t, event, ">Healthy<", "Last success", ">failed<")
 
 	env.Intent = 19
 	env.Attempts = nil
@@ -124,7 +132,7 @@ func TestArchivedDashboardRow(t *testing.T) {
 			Project: "demo", Intent: 45, DeleteAt: &deadline,
 			URL: "https://demo-45.preview.example.com",
 		}}, nil
-	}, nil)
+	}, nil, health.New(nil, nil, nil))
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
 	body := response.Body.String()
@@ -138,7 +146,7 @@ func TestUnavailableDashboard(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, t.Context(), nil, func() ([]state.Environment, error) {
 		return nil, errors.New("private state path")
-	}, nil)
+	}, nil, health.New(nil, nil, nil))
 	page := httptest.NewRecorder()
 	mux.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/", nil))
 	requireText(t, page.Body.String(), "Could not load preview environments.")
