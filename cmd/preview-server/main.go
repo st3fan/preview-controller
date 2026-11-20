@@ -15,6 +15,7 @@ import (
 	"github.com/st3fan/preview-controller/internal/config"
 	"github.com/st3fan/preview-controller/internal/deploy"
 	"github.com/st3fan/preview-controller/internal/gitverify"
+	"github.com/st3fan/preview-controller/internal/runtime"
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
@@ -36,7 +37,11 @@ func run(settings string) error {
 	if err != nil {
 		return err
 	}
-	service, err := deploy.New(cfg, store, gitverify.Verifier{})
+	runner, err := runtime.New(cfg.WorkspaceRoot)
+	if err != nil {
+		return err
+	}
+	service, err := deploy.New(cfg, store, gitverify.Verifier{}, runner)
 	if err != nil {
 		return err
 	}

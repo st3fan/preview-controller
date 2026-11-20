@@ -13,6 +13,7 @@ func validConfig(root string) Config {
 		ManagementListen:   "127.0.0.1:8080",
 		PreviewDomain:      "preview.example.com",
 		StateRoot:          root,
+		WorkspaceRoot:      filepath.Join(filepath.Dir(root), "workspaces"),
 		DeploymentTokenEnv: "PREVIEW_TEST_TOKEN",
 		Projects: map[string]Project{
 			"myproject": {
