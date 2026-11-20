@@ -33,6 +33,9 @@ func (s *stubService) GetDeployment(id string) (state.Attempt, state.Environment
 	return state.Attempt{ID: id}, state.Environment{ID: "myproject:123"}, nil
 }
 func (s *stubService) DeleteEnvironment(id string) error {
+	if id != "myproject:123" {
+		return state.ErrNotFound
+	}
 	s.deletes++
 	return nil
 }
@@ -40,7 +43,7 @@ func (s *stubService) DeleteEnvironment(id string) error {
 func TestDeleteRequiresBearerToken(t *testing.T) {
 	service := &stubService{}
 	handler := Handler(service, "shared-secret")
-	request := httptest.NewRequest(http.MethodDelete, "/api/environments/myproject:123", nil)
+	request := httptest.NewRequest(http.MethodDelete, "/api/environments/myproject/123", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusUnauthorized || service.deletes != 0 {
@@ -51,6 +54,20 @@ func TestDeleteRequiresBearerToken(t *testing.T) {
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent || service.deletes != 1 {
 		t.Fatalf("authorized deletion: %d, %d", response.Code, service.deletes)
+	}
+}
+
+func TestLegacyEnvironmentRoutesAreAbsent(t *testing.T) {
+	service := &stubService{}
+	handler := Handler(service, "shared-secret")
+	for _, method := range []string{http.MethodGet, http.MethodDelete} {
+		request := httptest.NewRequest(method, "/api/environments/myproject:123", nil)
+		request.Header.Set("Authorization", "Bearer shared-secret")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		if response.Code != http.StatusNotFound || service.deletes != 0 {
+			t.Fatalf("%s legacy route: status %d, deletes %d", method, response.Code, service.deletes)
+		}
 	}
 }
 
@@ -115,8 +132,8 @@ func TestReadOnlyStatus(t *testing.T) {
 	handler := Handler(&stubService{}, "shared-secret")
 	for path, want := range map[string]int{
 		"/api/environments":               http.StatusOK,
-		"/api/environments/myproject:123": http.StatusOK,
-		"/api/environments/missing:1":     http.StatusNotFound,
+		"/api/environments/myproject/123": http.StatusOK,
+		"/api/environments/missing/1":     http.StatusNotFound,
 		"/api/deployments/deployment-1":   http.StatusOK,
 		"/api/deployments/other":          http.StatusNotFound,
 	} {

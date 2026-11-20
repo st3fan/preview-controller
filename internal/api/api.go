@@ -86,8 +86,8 @@ func Handler(service Service, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, envs)
 	})
-	mux.HandleFunc("GET /api/environments/{id}", func(w http.ResponseWriter, r *http.Request) {
-		env, err := service.GetEnvironment(r.PathValue("id"))
+	mux.HandleFunc("GET /api/environments/{project}/{intent}", func(w http.ResponseWriter, r *http.Request) {
+		env, err := service.GetEnvironment(r.PathValue("project") + ":" + r.PathValue("intent"))
 		if err != nil {
 			if errors.Is(err, state.ErrNotFound) {
 				writeError(w, http.StatusNotFound, "environment not found")
@@ -98,12 +98,12 @@ func Handler(service Service, token string) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, env)
 	})
-	mux.HandleFunc("DELETE /api/environments/{id}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("DELETE /api/environments/{project}/{intent}", func(w http.ResponseWriter, r *http.Request) {
 		if !authorized(r.Header.Get("Authorization"), token) {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		if err := service.DeleteEnvironment(r.PathValue("id")); err != nil {
+		if err := service.DeleteEnvironment(r.PathValue("project") + ":" + r.PathValue("intent")); err != nil {
 			switch {
 			case errors.Is(err, state.ErrNotFound):
 				writeError(w, http.StatusNotFound, "environment not found")

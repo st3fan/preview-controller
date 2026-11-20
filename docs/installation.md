@@ -71,10 +71,10 @@ public wildcard site.
 
 Send a deployment request to the management listener with the bearer token and
 a full 40-character commit SHA. The request queues work; check
-`GET /api/deployments/{id}` or `GET /api/environments/{project:intent}` until
+`GET /api/deployments/{id}` or `GET /api/environments/{project}/{intent}` until
 the attempt becomes `healthy`. If a replacement fails, `active_commit` still
 identifies the previous working preview. To remove an environment, send an
-authenticated `DELETE /api/environments/{project:intent}`. Retry the same
+authenticated `DELETE /api/environments/{project}/{intent}`. Retry the same
 request if Docker cleanup reports a failure.
 
 ## Recover from an unknown settings field
