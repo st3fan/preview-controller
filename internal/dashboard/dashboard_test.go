@@ -69,7 +69,7 @@ func TestDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	event := readEvent(t, events)
-	requireText(t, event, "<h2>alpha</h2>", "#18 Fix &lt;preview&gt; &amp; routing", env.URL, active, ">failed<", `href="/dashboard/logs/alpha/18/deployment-0123456789abcdef0123456789abcdef">Live logs`)
+	requireText(t, event, "<h2>alpha</h2>", "#18 Fix &lt;preview&gt; &amp; routing", env.URL, active, ">failed<", `href="/dashboard/logs/alpha/18/deployment-0123456789abcdef0123456789abcdef" target="_blank" rel="noopener">Live logs`)
 
 	env.Intent = 19
 	env.Attempts = nil
