@@ -189,7 +189,7 @@ func (c Config) URL(project string, intent int64) (string, error) {
 	if _, ok := c.Projects[project]; !ok || intent < 1 {
 		return "", errors.New("unknown project or invalid intent")
 	}
-	label := fmt.Sprintf("%d-%s", intent, project)
+	label := fmt.Sprintf("%s-%d", project, intent)
 	if len(label) > 63 {
 		return "", errors.New("preview hostname label is too long")
 	}

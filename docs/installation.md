@@ -10,7 +10,7 @@ Do not place unrelated workloads or secrets on this host.
   the Linux host, and outbound HTTPS access to public GitHub repositories.
 - Wildcard DNS for `*.preview.example.com` pointing at Caddy and a wildcard TLS
   certificate or Caddy DNS challenge setup. A wildcard covers the flat
-  `<intent>-<project>.preview.example.com` hostname.
+  `<project>-<intent>.preview.example.com` hostname.
 - A dedicated service account that can access the Docker daemon. Membership in
   the `docker` group grants powerful host access; restrict it to this host.
 

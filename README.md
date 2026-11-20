@@ -58,12 +58,16 @@ Content-Type: application/json
 ```
 
 The API returns HTTP 202 with a deployment ID, `queued` status, and a stable
-URL such as `https://123-myproject.preview.example.com`. Verification proceeds
+URL such as `https://myproject-123.preview.example.com`. Verification proceeds
 asynchronously. Read status through `GET /api/deployments/{id}`,
 `GET /api/environments`, and `GET /api/environments/{project:intent}`.
 An authenticated `DELETE /api/environments/{project:intent}` removes a preview.
 If Docker cleanup fails, the route remains removed and the deletion can be
 retried with the same request.
+
+If upgrading from intent-first URLs, update bookmarks and integrations to the
+project-first hostname. Existing environments are reachable at their new URLs
+without rebuilding or redeploying. The same wildcard DNS and TLS setup applies.
 
 The project's Compose file is restricted to services and named volumes with a
 small set of service options. Build contexts, Dockerfiles, and bind mounts must

@@ -55,7 +55,7 @@ func TestDashboard(t *testing.T) {
 		ID:           state.ID("alpha", 18),
 		Project:      "alpha",
 		Intent:       18,
-		URL:          "https://18-alpha.preview.example.com",
+		URL:          "https://alpha-18.preview.example.com",
 		ActiveCommit: active,
 		Attempts: []state.Attempt{
 			{Status: state.Healthy},

@@ -15,7 +15,7 @@ import (
 type stubRouter struct{ port int }
 
 func (s stubRouter) ActivePort(project string, intent int64) (int, error) {
-	if project != "myproject" || intent != 123 || s.port == 0 {
+	if project != "my-project-7" || intent != 123 || s.port == 0 {
 		return 0, state.ErrNotFound
 	}
 	return s.port, nil
@@ -23,7 +23,7 @@ func (s stubRouter) ActivePort(project string, intent int64) (int, error) {
 
 func TestRoutesOnlyConfiguredStableHost(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Host != "123-myproject.preview.example.com" || r.URL.Path != "/hello" || r.Header.Get("X-Forwarded-Proto") != "https" {
+		if r.Host != "my-project-7-123.preview.example.com" || r.URL.Path != "/hello" || r.Header.Get("X-Forwarded-Proto") != "https" {
 			t.Errorf("forwarded request: host %q, path %q, proto %q", r.Host, r.URL.Path, r.Header.Get("X-Forwarded-Proto"))
 		}
 		w.WriteHeader(http.StatusTeapot)
@@ -37,9 +37,16 @@ func TestRoutesOnlyConfiguredStableHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Config{PreviewDomain: "preview.example.com", Projects: map[string]config.Project{"myproject": {}}}
+	cfg := config.Config{PreviewDomain: "preview.example.com", Projects: map[string]config.Project{"my-project-7": {}}}
 	handler := Handler(cfg, stubRouter{port: port})
-	for _, host := range []string{"123-other.preview.example.com", "0123-myproject.preview.example.com", "123-myproject.preview.example.com.evil.test", "123-myproject.preview.example.com:443", "123-myproject.other.example.com"} {
+	for _, host := range []string{
+		"other-123.preview.example.com",
+		"my-project-7-0123.preview.example.com",
+		"123-my-project-7.preview.example.com",
+		"my-project-7-123.preview.example.com.evil.test",
+		"my-project-7-123.preview.example.com:443",
+		"my-project-7-123.other.example.com",
+	} {
 		r := httptest.NewRequest(http.MethodGet, "http://"+host+"/hello", nil)
 		w := httptest.NewRecorder()
 		handler.ServeHTTP(w, r)
@@ -47,7 +54,7 @@ func TestRoutesOnlyConfiguredStableHost(t *testing.T) {
 			t.Fatalf("host %q returned %d", host, w.Code)
 		}
 	}
-	r := httptest.NewRequest(http.MethodGet, "http://123-myproject.preview.example.com/hello", nil)
+	r := httptest.NewRequest(http.MethodGet, "http://my-project-7-123.preview.example.com/hello", nil)
 	r.Header.Set("X-Forwarded-Proto", "https")
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, r)
