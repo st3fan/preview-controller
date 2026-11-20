@@ -16,3 +16,9 @@ This repository uses **Stefan's Development Lifecycle**, the user-installed Code
 ## Project-specific agent guidance
 
 Add repository-specific build/test commands, architecture constraints, security boundaries, and operational safeguards here. This section is never overwritten by `$sdlc bootstrap`.
+
+Before the first GitHub release, backward compatibility is optional. Breaking
+changes to APIs, configuration, and URLs may ship without aliases, shims, or
+deprecation periods. Describe user-visible changes in the corresponding Intent
+and PR. After the first release, agree on compatibility expectations before
+making further breaking changes.
