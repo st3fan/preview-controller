@@ -10,12 +10,12 @@
 
 ## Packaging and distribution
 
-- Build a native Linux executable with `CGO_ENABLED=0`. For the first version, install it from a repository source build on the preview host.
+- Build a native Linux executable with `CGO_ENABLED=0`. Install from a repository source build, either as a native executable or as a controller image with the Docker CLI and Compose plugin.
 - Release artifacts and an automated distribution channel are undecided.
 
 ## Hosting and deployment
 
-- Run the controller under systemd on a dedicated self-hosted Linux preview server. Run preview attempts as separate Docker Compose projects on that host.
+- Run the controller on a dedicated self-hosted Linux preview server under systemd or as a Compose service. The Compose installation uses host networking, mounts the host Docker socket only in the controller service, and stores state in a named volume. Bind-mount its workspace at the same absolute path on the host and inside the controller so the host Docker daemon can resolve checkout-relative mounts. Both modes run preview attempts as separate Docker Compose projects on that host.
 - The operator configures Caddy, wildcard DNS, and TLS once. Caddy forwards `*.preview.example.com` to the controller. Stable preview hostnames use the configurable flat form `<project>-<intent>.preview.example.com`.
 - Restrict the dashboard and deployment API to the home-lab network. Authenticate deployment requests with a shared bearer secret. A valid authenticated request is approval for the exact commit; the controller also verifies the commit in the configured public repository.
 - Build a replacement alongside the working environment. Change the Go proxy's active target only after health checks pass, and preserve the previous working preview if a replacement fails.

@@ -1,6 +1,8 @@
 services:
   web:
     build: .
+    volumes:
+      - ./index.html:/srv/index.html:ro
     depends_on:
       db:
         condition: service_healthy
