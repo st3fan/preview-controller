@@ -104,36 +104,45 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 	if err := worktree.Checkout(&git.CheckoutOptions{Hash: hash, Force: true}); err != nil {
 		return result, fmt.Errorf("checkout exact commit: %w", err)
 	}
-	compose := filepath.Join(checkout, cfg.ComposeFile)
-	if err := ValidateCompose(compose, checkout, cfg.PublicService); err != nil {
+	sourceCompose := filepath.Join(checkout, cfg.ComposeFile)
+	targetPort := cfg.ContainerPort()
+	content, err := prepareCompose(sourceCompose, checkout, cfg.PublicService, targetPort)
+	if err != nil {
 		return result, fmt.Errorf("Compose policy: %w", err)
 	}
-	overlay := filepath.Join(result.Workspace, "overlay.yaml")
-	content := fmt.Sprintf("services:\n  %s:\n    ports:\n      - \"127.0.0.1::%d\"\n", cfg.PublicService, cfg.PublicPort)
-	if err := os.WriteFile(overlay, []byte(content), 0600); err != nil {
+	compose := filepath.Join(result.Workspace, "preview-compose.yaml")
+	if err := os.WriteFile(compose, content, 0600); err != nil {
 		return result, err
 	}
+	envFile, err := writeComposeEnv(result.Workspace, cfg, targetPort)
+	if err != nil {
+		return result, err
+	}
+	defer os.Remove(envFile)
 	if err := progress(state.Building, result); err != nil {
 		return result, err
 	}
-	args := []string{"compose", "-p", result.ComposeProject, "-f", compose, "-f", overlay}
-	output, err := r.docker(ctx, 2<<20, append(args, "config", "--format", "json")...)
+	args := []string{"compose", "--project-directory", filepath.Dir(sourceCompose), "--env-file", envFile, "-p", result.ComposeProject, "-f", compose}
+	runCompose := func(limit int, command ...string) (string, error) {
+		return r.runDocker(ctx, limit, len(cfg.ComposeEnvFrom) > 0, append(args, command...)...)
+	}
+	output, err := runCompose(2<<20, "config", "--format", "json")
 	if err != nil {
 		return result, fmt.Errorf("resolve Compose configuration: %w", err)
 	}
-	if err := validateResolved([]byte(output), cfg.PublicService, cfg.PublicPort, checkout); err != nil {
+	if err := validateResolved([]byte(output), cfg.PublicService, targetPort, checkout); err != nil {
 		return result, fmt.Errorf("resolved Compose policy: %w", err)
 	}
-	if _, err := r.docker(ctx, 2<<20, append(args, "build")...); err != nil {
+	if _, err := runCompose(2<<20, "build"); err != nil {
 		return result, fmt.Errorf("build Compose stack: %w", err)
 	}
 	if err := progress(state.Starting, result); err != nil {
 		return result, err
 	}
-	if _, err := r.docker(ctx, 2<<20, append(args, "up", "-d", "--no-build", "--wait", "--wait-timeout", "180")...); err != nil {
+	if _, err := runCompose(2<<20, "up", "-d", "--no-build", "--wait", "--wait-timeout", "180"); err != nil {
 		return result, fmt.Errorf("start Compose stack: %w", err)
 	}
-	portText, err := r.docker(ctx, 1024, append(args, "port", cfg.PublicService, strconv.Itoa(cfg.PublicPort))...)
+	portText, err := runCompose(1024, "port", cfg.PublicService, strconv.Itoa(targetPort))
 	if err != nil {
 		return result, fmt.Errorf("read public port: %w", err)
 	}
@@ -152,6 +161,49 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 		return result, err
 	}
 	return result, nil
+}
+
+func writeComposeEnv(workspace string, cfg config.Project, port int) (string, error) {
+	var content strings.Builder
+	fmt.Fprintf(&content, "PREVIEW_PORT=%d\n", port)
+	for name, value := range cfg.ComposeEnv {
+		if err := appendEnvValue(&content, name, value); err != nil {
+			return "", err
+		}
+	}
+	for name, source := range cfg.ComposeEnvFrom {
+		value, ok := os.LookupEnv(source)
+		if !ok {
+			return "", fmt.Errorf("Compose variable %s requires controller environment variable %s", name, source)
+		}
+		if err := appendEnvValue(&content, name, value); err != nil {
+			return "", err
+		}
+	}
+	f, err := os.CreateTemp(workspace, ".compose-env-")
+	if err != nil {
+		return "", err
+	}
+	_, writeErr := f.WriteString(content.String())
+	if err := errors.Join(writeErr, f.Close()); err != nil {
+		os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
+}
+
+var composeEnvEscapes = strings.NewReplacer(
+	`\`, `\\`, `"`, `\"`, "$", "$$", "\r", `\r`, "\n", `\n`, "\t", `\t`,
+)
+
+func appendEnvValue(content *strings.Builder, name, value string) error {
+	for _, char := range value {
+		if char < ' ' && char != '\r' && char != '\n' && char != '\t' {
+			return fmt.Errorf("Compose variable %s contains an unsupported control character", name)
+		}
+	}
+	fmt.Fprintf(content, "%s=\"%s\"\n", name, composeEnvEscapes.Replace(value))
+	return nil
 }
 
 func (r *Runtime) Cleanup(ctx context.Context, projectName string, intent int64, attempt state.Attempt) error {
@@ -217,18 +269,25 @@ func (r *Runtime) Check(ctx context.Context, attempt state.Attempt, cfg config.P
 }
 
 func (r *Runtime) docker(ctx context.Context, limit int, args ...string) (string, error) {
+	return r.runDocker(ctx, limit, false, args...)
+}
+
+func (r *Runtime) runDocker(ctx context.Context, limit int, confidential bool, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "DOCKER_CONFIG=" + r.dockerConfig}
-	var output cappedOutput
-	output.limit = limit
-	cmd.Stdout, cmd.Stderr = &output, &output
+	output := cappedOutput{limit: limit}
+	stderr := cappedOutput{limit: limit}
+	cmd.Stdout, cmd.Stderr = &output, &stderr
 	err := cmd.Run()
 	text := output.String()
-	if output.truncated {
+	if output.truncated || stderr.truncated {
 		return text, errors.New("Docker output exceeded limit")
 	}
 	if err != nil {
-		return text, fmt.Errorf("docker %s: %w: %s", strings.Join(args, " "), err, text)
+		if confidential {
+			return "", fmt.Errorf("Docker Compose command failed: %w", err)
+		}
+		return text, fmt.Errorf("docker %s: %w: %s%s", strings.Join(args, " "), err, text, stderr.String())
 	}
 	return text, nil
 }
@@ -306,8 +365,8 @@ func validateResolved(data []byte, publicService string, targetPort int, checkou
 	if err := json.Unmarshal(data, &model); err != nil {
 		return err
 	}
-	if len(model.Services) == 0 {
-		return errors.New("resolved Compose model has no services")
+	if _, exists := model.Services[publicService]; !exists {
+		return errors.New("resolved Compose model is missing the public service")
 	}
 	for name, service := range model.Services {
 		if service.Privileged || service.NetworkMode == "host" {

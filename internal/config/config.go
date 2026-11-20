@@ -36,11 +36,13 @@ type Config struct {
 }
 
 type Project struct {
-	Repository    string `json:"repository"`
-	ComposeFile   string `json:"compose_file"`
-	PublicService string `json:"public_service"`
-	PublicPort    int    `json:"public_port"`
-	HealthPath    string `json:"health_path"`
+	Repository     string            `json:"repository"`
+	ComposeFile    string            `json:"compose_file"`
+	PublicService  string            `json:"public_service"`
+	PublicPort     int               `json:"public_port"`
+	HealthPath     string            `json:"health_path"`
+	ComposeEnv     map[string]string `json:"compose_env,omitempty"`
+	ComposeEnvFrom map[string]string `json:"compose_env_from,omitempty"`
 }
 
 func Load(filename string) (Config, error) {
@@ -147,13 +149,40 @@ func (p Project) Validate() error {
 	if !projectName.MatchString(p.PublicService) {
 		return errors.New("public_service must be a service slug")
 	}
-	if p.PublicPort < 1 || p.PublicPort > 65535 {
-		return errors.New("public_port must be between 1 and 65535")
+	if p.PublicPort < 0 || p.PublicPort > 65535 {
+		return errors.New("public_port must be zero (default) or between 1 and 65535")
 	}
 	if !strings.HasPrefix(p.HealthPath, "/") || strings.HasPrefix(p.HealthPath, "//") || strings.ContainsAny(p.HealthPath, "\r\n") {
 		return errors.New("health_path must be an absolute HTTP path")
 	}
+	for name, value := range p.ComposeEnv {
+		if !validComposeVariable(name) || strings.ContainsRune(value, 0) {
+			return fmt.Errorf("invalid compose_env entry %q", name)
+		}
+	}
+	for name, source := range p.ComposeEnvFrom {
+		if !validComposeVariable(name) || !envName.MatchString(source) {
+			return fmt.Errorf("invalid compose_env_from entry %q", name)
+		}
+		if _, exists := p.ComposeEnv[name]; exists {
+			return fmt.Errorf("Compose variable %q is configured twice", name)
+		}
+	}
+
 	return nil
+}
+
+func (p Project) ContainerPort() int {
+	if p.PublicPort == 0 {
+		return 8080
+	}
+	return p.PublicPort
+}
+
+func validComposeVariable(name string) bool {
+	return envName.MatchString(name) && name != "PREVIEW_PORT" && name != "PATH" &&
+		!strings.HasPrefix(name, "COMPOSE_") && !strings.HasPrefix(name, "DOCKER_") &&
+		!strings.HasPrefix(name, "BUILDX_") && !strings.HasPrefix(name, "BUILDKIT_")
 }
 
 func (c Config) URL(project string, intent int64) (string, error) {

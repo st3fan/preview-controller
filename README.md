@@ -61,13 +61,45 @@ retried with the same request.
 The project's Compose file is restricted to services and named volumes with a
 small set of service options. Build contexts, Dockerfiles, and bind mounts must
 resolve inside the checkout. The controller rejects host access, external
-Compose files, interpolation, public port mappings, and unsupported options.
-It creates a unique Compose project per attempt and publishes only the chosen
-service on a random loopback port. A candidate passes the configured HTTP
+Compose files and unsupported options. It replaces all published ports in the
+project file with one dynamically assigned loopback mapping for the configured
+public service. The controller creates a unique Compose project per attempt.
+A candidate passes the configured HTTP
 health path before its status becomes `healthy`. Failed candidates are cleaned
 up; existing stacks are left running. After a successful route switch, the
 previous stack is removed. The preview listener accepts only configured stable
 hostnames and proxies only to the active attempt's recorded loopback port.
+
+## Compose preview contract
+
+Set `public_service` to the Compose service that receives preview traffic.
+`public_port` is its container port and defaults to `8080`. Fixed-port apps can
+set `public_port` to match their existing listener. Configurable apps can use
+`${PREVIEW_PORT:-8080}` in their Compose command or environment. The controller
+sets `PREVIEW_PORT` for Compose interpolation and assigns the host port itself.
+
+Use `compose_env` in a project's settings for literal values and
+`compose_env_from` to map Compose variables to controller service environment
+variables. For example, these project settings supply a browser origin and a
+preview-only database password:
+
+```json
+{
+  "compose_env": {
+    "APP_BROWSER_ORIGIN": "https://preview.example.com"
+  },
+  "compose_env_from": {
+    "POSTGRES_PASSWORD": "PREVIEW_POSTGRES_PASSWORD"
+  }
+}
+```
+
+Set referenced secrets in the controller's service environment and give each
+project only the credentials its approved preview commits should receive. The
+controller does not load repository `.env` files. Interpolation is supported in
+service images, commands, entrypoints, environments, and health checks. Build
+paths and mount declarations must remain literal so the controller can check
+them before invoking Docker Compose.
 
 On a disposable Linux host with Docker Compose, run the opt-in fixture checks
 with `CGO_ENABLED=0 go test -tags=integration -timeout=30m ./internal/runtime
