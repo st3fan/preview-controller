@@ -195,6 +195,9 @@ Issue. To show the issue title, include the optional `issue_title` string in the
 authenticated deployment request. Supply it only when the title can be shown to
 preview visitors. Submissions without it show the issue number alone.
 
+Expand **Discuss this intent** to copy a starter prompt for your chat. **Open in
+Codex** prefills the same prompt in the desktop app for you to review and send.
+
 Set the optional top-level `dashboard_origin` to the browser-reachable origin
 of your existing operator dashboard (for example, `https://operator.example.com`).
 When live logs are available for the active attempt, the inspector links to that

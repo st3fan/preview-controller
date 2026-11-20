@@ -15,6 +15,10 @@ style.textContent = `
            border-radius: .5rem; padding: 1rem; }
   h2 { margin: 0 0 .75rem; font-size: 1rem; }
   a { display: block; margin-bottom: .65rem; color: #174b9c; }
+  details { margin-bottom: .75rem; }
+  summary { cursor: pointer; }
+  textarea { display: block; box-sizing: border-box; width: 100%;
+             margin: .5rem 0; font: inherit; }
 `;
 
 const open = document.createElement("button");
@@ -44,6 +48,46 @@ for (const [label, href] of [
   link.rel = "noopener noreferrer";
   panel.append(link);
 }
+
+const discussion = document.createElement("details");
+const discuss = document.createElement("summary");
+discuss.textContent = "Discuss this intent";
+
+const prompt = document.createElement("textarea");
+prompt.setAttribute("aria-label", "Starter prompt");
+prompt.readOnly = true;
+prompt.rows = 7;
+prompt.value = [
+  "I’m reviewing a deployed preview and want to discuss this intent.",
+  "",
+  `Repository: ${deployment.Repository}`,
+  `Intent Issue: ${deployment.IssueURL}`,
+  `Deployed commit: ${deployment.CommitURL}`,
+  "",
+  "Read the Intent Issue and inspect the exact deployed commit where you have access. Discuss what you find with me before making any changes.",
+].join("\n");
+
+const copy = document.createElement("button");
+copy.type = "button";
+copy.textContent = "Copy prompt";
+const copyStatus = document.createElement("div");
+copyStatus.setAttribute("role", "status");
+copy.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(prompt.value);
+    copyStatus.textContent = "Prompt copied.";
+  } catch {
+    prompt.focus();
+    prompt.select();
+    copyStatus.textContent = "Copy the selected prompt manually.";
+  }
+});
+
+const codex = document.createElement("a");
+codex.href = `codex://new?prompt=${encodeURIComponent(prompt.value)}`;
+codex.textContent = "Open in Codex";
+discussion.append(discuss, prompt, copy, copyStatus, codex);
+panel.append(discussion);
 
 const close = document.createElement("button");
 close.type = "button";

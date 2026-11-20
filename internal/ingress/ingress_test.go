@@ -111,12 +111,14 @@ func TestInspectorInjection(t *testing.T) {
 	for _, tc := range []struct {
 		name, destination, title string
 		enabled, want            bool
+		commitDigit              string
 	}{
-		{"document with title", "document", title, true, true},
-		{"older deployment", "document", "", true, true},
-		{"embedded document", "iframe", title, true, false},
-		{"HTML fetched by API client", "", title, true, false},
-		{"opted out", "document", title, false, false},
+		{"document with title", "document", title, true, true, "a"},
+		{"older deployment", "document", "", true, true, "a"},
+		{"replacement deployment", "document", title, true, true, "b"},
+		{"embedded document", "iframe", title, true, false, "a"},
+		{"HTML fetched by API client", "", title, true, false, "a"},
+		{"opted out", "document", title, false, false, "a"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -130,7 +132,7 @@ func TestInspectorInjection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			attempt := state.Attempt{Port: port, Commit: strings.Repeat("a", 40), IssueTitle: tc.title}
+			attempt := state.Attempt{Port: port, Commit: strings.Repeat(tc.commitDigit, 40), IssueTitle: tc.title}
 			cfg := config.Config{PreviewDomain: "preview.example.com", Projects: map[string]config.Project{
 				"my-project-7": {Repository: "https://github.com/example/project.git", PreviewInspector: tc.enabled},
 			}}
@@ -149,7 +151,13 @@ func TestInspectorInjection(t *testing.T) {
 				}
 				return
 			}
-			for _, want := range []string{`<p>Preview</p><script>`, `"IssueURL":"https://github.com/example/project/issues/123"`, `"CommitURL":"https://github.com/example/project/commit/` + attempt.Commit + `"`, `window.self !== window.top`} {
+			for _, want := range []string{
+				`<p>Preview</p><script>`,
+				`"Repository":"https://github.com/example/project"`,
+				`"IssueURL":"https://github.com/example/project/issues/123"`,
+				`"CommitURL":"https://github.com/example/project/commit/` + attempt.Commit + `"`,
+				`window.self !== window.top`,
+			} {
 				if !strings.Contains(body, want) {
 					t.Errorf("body missing %q", want)
 				}
