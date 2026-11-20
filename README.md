@@ -152,6 +152,8 @@ hostnames and proxies only to the active attempt's recorded loopback port.
 
 ## Compose preview contract
 
+To add a project-side `preview.sh`, follow the [preview script guide](docs/preview-script.md).
+
 Set `public_service` to the Compose service that receives preview traffic.
 `public_port` is its container port and defaults to `8080`. Fixed-port apps can
 set `public_port` to match their existing listener. Configurable apps can use
