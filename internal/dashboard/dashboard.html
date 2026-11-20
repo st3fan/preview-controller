@@ -45,7 +45,7 @@
       {{range .Environments}}
         {{$intent := .Intent}}
         <tr>
-          <th scope="row">{{if .IntentURL}}<a href="{{.IntentURL}}" target="_blank" rel="noopener">#{{.Intent}}</a>{{else}}#{{.Intent}}{{end}}</th>
+          <th scope="row">{{if .IntentURL}}<a href="{{.IntentURL}}" target="_blank" rel="noopener">{{template "intent-label" .}}</a>{{else}}{{template "intent-label" .}}{{end}}</th>
           <td><a href="{{.URL}}">Open preview</a></td>
           <td>{{if .CommitURL}}<a href="{{.CommitURL}}" target="_blank" rel="noopener"><code title="{{.Commit}}">{{.ShortCommit}}</code></a>{{else if .Commit}}<code title="{{.Commit}}">{{.ShortCommit}}</code>{{else}}None{{end}}</td>
           <td>{{if .Status}}<span class="status {{.Status}}">{{.Status}}</span>{{else}}No attempts{{end}}</td>
@@ -61,3 +61,5 @@
 {{end}}
 {{end}}
 {{end}}
+
+{{define "intent-label"}}#{{.Intent}}{{with .IssueTitle}} {{.}}{{end}}{{end}}
