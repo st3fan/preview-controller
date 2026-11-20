@@ -140,6 +140,7 @@ func (s *Service) Submit(project string, intent int64, commit string) (state.Att
 	s.running[key] = true
 	s.wg.Add(1)
 	release = false
+	slog.Debug("deployment queued", "project", project, "intent", intent, "deployment", id, "commit", attempt.Commit)
 	go s.verify(project, intent, id, projectCfg.Repository, attempt.Commit)
 	return attempt, env, nil
 }
@@ -234,6 +235,7 @@ func (s *Service) verify(project string, intent int64, id, repository, commit st
 		}
 		return
 	}
+	slog.Debug("checking candidate before route switch", "deployment", id, "port", result.Port)
 	previous, err := s.activate(project, intent, candidate, result)
 	if err != nil {
 		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -248,7 +250,9 @@ func (s *Service) verify(project string, intent int64, id, repository, commit st
 		}
 		return
 	}
+	slog.Debug("preview route activated", "project", project, "intent", intent, "deployment", id, "commit", commit, "port", result.Port)
 	if previous.ID != "" && previous.ID != id {
+		slog.Debug("cleaning up replaced deployment", "deployment", previous.ID)
 		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		if err := s.runner.Cleanup(cleanup, project, intent, previous); err != nil {
 			slog.Error("retire previous attempt", "deployment", previous.ID, "error", err)
@@ -378,6 +382,7 @@ func (s *Service) DeleteEnvironment(id string) error {
 		delete(s.deleting, key)
 		s.mu.Unlock()
 	}()
+	slog.Debug("removing preview environment", "project", project, "intent", intent, "attempts", len(env.Attempts))
 	var problems []error
 	if s.runner != nil {
 		for _, attempt := range env.Attempts {
@@ -391,7 +396,11 @@ func (s *Service) DeleteEnvironment(id string) error {
 	if len(problems) > 0 {
 		return errors.Join(problems...)
 	}
-	return s.store.Delete(project, intent)
+	if err := s.store.Delete(project, intent); err != nil {
+		return err
+	}
+	slog.Debug("preview environment removed", "project", project, "intent", intent)
+	return nil
 }
 
 func (s *Service) update(project string, intent int64, id string, status state.Status, message string) error {
@@ -408,6 +417,7 @@ func (s *Service) updateWithResult(project string, intent int64, id string, stat
 	for i := range env.Attempts {
 		if env.Attempts[i].ID == id {
 			now := time.Now().UTC()
+			previous := env.Attempts[i].Status
 			env.Attempts[i].Status = status
 			env.Attempts[i].Error = message
 			if result != nil {
@@ -417,7 +427,13 @@ func (s *Service) updateWithResult(project string, intent int64, id string, stat
 			}
 			env.Attempts[i].UpdatedAt = now
 			env.UpdatedAt = now
-			return s.store.Save(env)
+			if err := s.store.Save(env); err != nil {
+				return err
+			}
+			if previous != status {
+				slog.Debug("deployment status changed", "project", project, "intent", intent, "deployment", id, "previous", previous, "status", status)
+			}
+			return nil
 		}
 	}
 	return state.ErrNotFound
@@ -428,6 +444,7 @@ func (s *Service) reconcile() error {
 	if err != nil {
 		return err
 	}
+	slog.Debug("reconciling saved preview environments", "environments", len(envs))
 	for _, env := range envs {
 		changed := false
 		activeFound := false
@@ -470,6 +487,7 @@ func (s *Service) reconcile() error {
 				}
 			}
 			if inProgress(attempt.Status) {
+				slog.Debug("recovering interrupted deployment", "deployment", attempt.ID, "status", attempt.Status)
 				message := "controller restarted before deployment completed"
 				if s.runner != nil {
 					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

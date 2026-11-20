@@ -21,101 +21,119 @@ var allowedServiceKeys = map[string]bool{
 	"restart": true, "init": true, "stop_grace_period": true,
 }
 
-// ValidateCompose accepts a deliberately small Compose subset before calling
+// prepareCompose accepts a deliberately small Compose subset before calling
 // Docker Compose. In particular, no external files or host-executed features
 // are allowed to be interpreted by the Compose CLI before this check.
-func ValidateCompose(filename, checkout, publicService string) error {
+func prepareCompose(filename, checkout, publicService string, port int) ([]byte, error) {
 	if err := resolvedInsideCheckout(checkout, filename); err != nil {
-		return fmt.Errorf("Compose file: %w", err)
+		return nil, fmt.Errorf("Compose file: %w", err)
 	}
 	info, err := os.Lstat(filename)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		return errors.New("Compose file must be a regular file")
+		return nil, errors.New("Compose file must be a regular file")
 	}
 	if info.Size() > 1<<20 {
-		return errors.New("Compose file is too large")
+		return nil, errors.New("Compose file is too large")
 	}
 	f, err := os.Open(filename)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer f.Close()
 	decoder := yaml.NewDecoder(io.LimitReader(f, 1<<20+1))
 	var doc yaml.Node
 	if err := decoder.Decode(&doc); err != nil {
-		return fmt.Errorf("parse Compose file: %w", err)
+		return nil, fmt.Errorf("parse Compose file: %w", err)
 	}
 	var extra yaml.Node
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return errors.New("Compose file must contain one YAML document")
+		return nil, errors.New("Compose file must contain one YAML document")
 	}
 	if len(doc.Content) != 1 {
-		return errors.New("Compose file must contain a mapping")
+		return nil, errors.New("Compose file must contain a mapping")
 	}
 	if err := inspectNode(doc.Content[0]); err != nil {
-		return err
+		return nil, err
 	}
 	root, err := mapping(doc.Content[0])
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for key := range root {
 		if key != "services" && key != "volumes" {
-			return fmt.Errorf("unsupported top-level Compose key %q", key)
+			return nil, fmt.Errorf("unsupported top-level Compose key %q", key)
 		}
 	}
 	services, err := mapping(root["services"])
 	if err != nil || len(services) == 0 {
-		return errors.New("Compose services must be a non-empty mapping")
+		return nil, errors.New("Compose services must be a non-empty mapping")
 	}
 	if _, ok := services[publicService]; !ok {
-		return fmt.Errorf("public service %q is missing", publicService)
+		return nil, fmt.Errorf("public service %q is missing", publicService)
 	}
 	volumes := map[string]*yaml.Node{}
 	if raw, ok := root["volumes"]; ok {
 		volumes, err = mapping(raw)
 		if err != nil {
-			return fmt.Errorf("top-level volumes: %w", err)
+			return nil, fmt.Errorf("top-level volumes: %w", err)
 		}
 		for name, value := range volumes {
 			if !composeName.MatchString(name) || (value.Tag != "!!null" && (value.Kind != yaml.MappingNode || len(value.Content) != 0)) {
-				return fmt.Errorf("volume %q must be an empty named volume", name)
+				return nil, fmt.Errorf("volume %q must be an empty named volume", name)
 			}
 		}
 	}
 	for name, raw := range services {
 		if !composeName.MatchString(name) {
-			return fmt.Errorf("invalid service name %q", name)
+			return nil, fmt.Errorf("invalid service name %q", name)
 		}
 		service, err := mapping(raw)
 		if err != nil {
-			return fmt.Errorf("service %q: %w", name, err)
+			return nil, fmt.Errorf("service %q: %w", name, err)
 		}
 		for key, value := range service {
+			if key == "ports" {
+				removeMappingKey(raw, key)
+				continue
+			}
 			if !allowedServiceKeys[key] {
-				return fmt.Errorf("service %q uses unsupported Compose key %q", name, key)
+				return nil, fmt.Errorf("service %q uses unsupported Compose key %q", name, key)
+			}
+			switch key {
+			case "environment", "command", "entrypoint", "healthcheck", "image":
+			default:
+				if hasInterpolation(value) {
+					return nil, fmt.Errorf("service %q does not support interpolation in %s", name, key)
+				}
 			}
 			if key == "build" {
 				if err := validateBuild(value, checkout, filepath.Dir(filename)); err != nil {
-					return fmt.Errorf("service %q build: %w", name, err)
+					return nil, fmt.Errorf("service %q build: %w", name, err)
 				}
 			}
 			if key == "volumes" {
 				if err := validateMounts(value, checkout, filepath.Dir(filename), volumes); err != nil {
-					return fmt.Errorf("service %q volumes: %w", name, err)
+					return nil, fmt.Errorf("service %q volumes: %w", name, err)
 				}
 			}
 		}
 		if _, image := service["image"]; !image {
 			if _, build := service["build"]; !build {
-				return fmt.Errorf("service %q needs image or build", name)
+				return nil, fmt.Errorf("service %q needs image or build", name)
 			}
 		}
 	}
-	return nil
+	public := services[publicService]
+	public.Content = append(public.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "ports"},
+		&yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Content: []*yaml.Node{
+			{Kind: yaml.ScalarNode, Tag: "!!str", Value: fmt.Sprintf("127.0.0.1::%d", port)},
+		}},
+	)
+	return yaml.Marshal(&doc)
 }
 
 func inspectNode(n *yaml.Node) error {
@@ -125,14 +143,16 @@ func inspectNode(n *yaml.Node) error {
 	if n.Anchor != "" || n.Alias != nil || n.Kind == yaml.AliasNode {
 		return errors.New("YAML anchors and aliases are unsupported")
 	}
-	if n.Kind == yaml.ScalarNode && strings.Contains(n.Value, "$") {
-		return errors.New("Compose interpolation is unsupported")
+	switch n.Tag {
+	case "!!map", "!!seq", "!!str", "!!null", "!!bool", "!!int", "!!float", "!!timestamp":
+	default:
+		return errors.New("custom YAML tags are unsupported")
 	}
 	if n.Kind == yaml.MappingNode {
 		seen := map[string]bool{}
 		for i := 0; i < len(n.Content); i += 2 {
 			key := n.Content[i]
-			if key.Kind != yaml.ScalarNode || key.Tag != "!!str" || seen[key.Value] {
+			if key.Kind != yaml.ScalarNode || key.Tag != "!!str" || seen[key.Value] || strings.Contains(key.Value, "$") {
 				return errors.New("Compose mapping has an invalid or duplicate key")
 			}
 			seen[key.Value] = true
@@ -144,6 +164,27 @@ func inspectNode(n *yaml.Node) error {
 		}
 	}
 	return nil
+}
+
+func removeMappingKey(n *yaml.Node, key string) {
+	for i := 0; i < len(n.Content); i += 2 {
+		if n.Content[i].Value == key {
+			n.Content = append(n.Content[:i], n.Content[i+2:]...)
+			return
+		}
+	}
+}
+
+func hasInterpolation(n *yaml.Node) bool {
+	if n.Kind == yaml.ScalarNode && strings.Contains(n.Value, "$") {
+		return true
+	}
+	for _, child := range n.Content {
+		if hasInterpolation(child) {
+			return true
+		}
+	}
+	return false
 }
 
 func mapping(n *yaml.Node) (map[string]*yaml.Node, error) {

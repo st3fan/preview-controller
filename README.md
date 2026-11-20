@@ -21,7 +21,7 @@ Copy [the example settings](config/preview-server.example.json) to
 `/etc/preview-server.json` and adjust the project allowlist, state root,
 workspace root, and management listener for the host. Put the bearer secret in
 the environment variable named by `deployment_token_env`; the settings file
-contains no secret or deployment state. The management listener accepts only a loopback or private
+contains no deployment state. The management listener accepts only a loopback or private
 IP address. The service account needs write access to the state and workspace
 roots and access to the local Docker daemon. Run it only on a dedicated preview
 host; Docker builds and containers can execute untrusted project code there.
@@ -31,6 +31,11 @@ The `preview_listen` address is a separate listener for Caddy. See
 ```sh
 PREVIEW_SERVER_TOKEN='replace-with-a-secret' ./preview-server -config /etc/preview-server.json
 ```
+
+Add `-verbose` to the server command to log startup reconciliation, deployment
+progress, health checks, route switches, and cleanup. Use the deployment ID
+to correlate those messages with the status API. Verbose logs omit Compose
+output and variable values.
 
 The controller writes one atomic JSON file per environment at
 `<state-root>/<project>/<intent>.json`. It records attempts and errors there.
@@ -61,13 +66,47 @@ retried with the same request.
 The project's Compose file is restricted to services and named volumes with a
 small set of service options. Build contexts, Dockerfiles, and bind mounts must
 resolve inside the checkout. The controller rejects host access, external
-Compose files, interpolation, public port mappings, and unsupported options.
-It creates a unique Compose project per attempt and publishes only the chosen
-service on a random loopback port. A candidate passes the configured HTTP
+Compose files and unsupported options. It replaces all published ports in the
+project file with one dynamically assigned loopback mapping for the configured
+public service. The controller creates a unique Compose project per attempt.
+A candidate passes the configured HTTP
 health path before its status becomes `healthy`. Failed candidates are cleaned
 up; existing stacks are left running. After a successful route switch, the
 previous stack is removed. The preview listener accepts only configured stable
 hostnames and proxies only to the active attempt's recorded loopback port.
+
+## Compose preview contract
+
+Set `public_service` to the Compose service that receives preview traffic.
+`public_port` is its container port and defaults to `8080`. Fixed-port apps can
+set `public_port` to match their existing listener. Configurable apps can use
+`${PREVIEW_PORT:-8080}` in their Compose command or environment. The controller
+sets `PREVIEW_PORT` for Compose interpolation and assigns the host port itself.
+
+Use `compose_env` in a project's settings for literal values, including
+preview-only secrets. Keep settings files with literal secrets private and out
+of version control. Use
+`compose_env_from` to map Compose variables to controller service environment
+variables. For example, these project settings supply a literal database
+password and reference a token from the service environment:
+
+```json
+{
+  "compose_env": {
+    "POSTGRES_PASSWORD": "replace-with-a-preview-only-password"
+  },
+  "compose_env_from": {
+    "APP_API_TOKEN": "PREVIEW_APP_API_TOKEN"
+  }
+}
+```
+
+Set referenced secrets in the controller's service environment and give each
+project only the credentials its approved preview commits should receive. The
+controller does not load repository `.env` files. Interpolation is supported in
+service images, commands, entrypoints, environments, and health checks. Build
+paths and mount declarations must remain literal so the controller can check
+them before invoking Docker Compose.
 
 On a disposable Linux host with Docker Compose, run the opt-in fixture checks
 with `CGO_ENABLED=0 go test -tags=integration -timeout=30m ./internal/runtime

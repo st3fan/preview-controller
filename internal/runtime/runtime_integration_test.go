@@ -4,8 +4,10 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -77,5 +79,87 @@ func TestComposeCandidateLifecycle(t *testing.T) {
 	alive, err := runner.Check(ctx, attempt, project)
 	if err != nil || !alive {
 		t.Fatalf("healthy candidate check = %v, %v", alive, err)
+	}
+}
+
+// This test renders Compose configuration without starting containers.
+func TestComposeInterpolationAndPortReplacement(t *testing.T) {
+	checkout := t.TempDir()
+	composeDir := filepath.Join(checkout, "nested")
+	if err := os.Mkdir(composeDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(composeDir, "compose.yaml")
+	for name, content := range map[string]string{
+		"Dockerfile": "FROM scratch\n",
+		".env":       "IGNORED=from-checkout\n",
+		"compose.yaml": `services:
+  web:
+    build: .
+    command: ["app", "${PREVIEW_PORT:?missing}"]
+    environment:
+      CONFIGURED: ${VALUE:?missing}
+      SECRET: ${SECRET:?missing}
+      IGNORED: ${IGNORED:-fallback}
+    ports: ["${HOST_PORT:?unneeded}:8080"]
+  db:
+    image: alpine
+    ports: ["5432:5432"]
+`,
+	} {
+		if err := os.WriteFile(filepath.Join(composeDir, name), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workspace := t.TempDir()
+	runner, err := New(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_COMPOSE_SECRET", "quote'\"\\\nCOMPOSE_FILE=ignored\\")
+	t.Setenv("IGNORED", "from-controller-environment")
+	project := config.Project{
+		PublicService:  "web",
+		ComposeEnv:     map[string]string{"VALUE": "operator value"},
+		ComposeEnvFrom: map[string]string{"SECRET": "TEST_COMPOSE_SECRET"},
+	}
+	port := project.ContainerPort()
+	prepared, err := prepareCompose(source, checkout, project.PublicService, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(workspace, "preview-compose.yaml")
+	if err := os.WriteFile(path, prepared, 0600); err != nil {
+		t.Fatal(err)
+	}
+	envFile, err := writeComposeEnv(workspace, project, port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	output, err := runner.docker(ctx, 2<<20, "compose", "--project-directory", composeDir, "--env-file", envFile,
+		"-p", "preview-render-test", "-f", path, "config", "--format", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateResolved([]byte(output), project.PublicService, port, checkout); err != nil {
+		t.Fatal(err)
+	}
+	var rendered struct {
+		Services map[string]struct {
+			Build       struct{ Context string }
+			Command     []string
+			Environment map[string]string
+		}
+	}
+	if err := json.Unmarshal([]byte(output), &rendered); err != nil {
+		t.Fatal(err)
+	}
+	web := rendered.Services["web"]
+	if web.Build.Context != composeDir || !slices.Equal(web.Command, []string{"app", "8080"}) ||
+		web.Environment["CONFIGURED"] != "operator value" || web.Environment["IGNORED"] != "fallback" ||
+		web.Environment["SECRET"] != os.Getenv("TEST_COMPOSE_SECRET") {
+		t.Fatal("unexpected resolved relative path, command, or interpolation values")
 	}
 }
