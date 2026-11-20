@@ -15,7 +15,7 @@ type stubService struct{ submits, deletes int }
 
 func (s *stubService) Submit(project string, intent int64, commit string) (state.Attempt, state.Environment, error) {
 	s.submits++
-	return state.Attempt{ID: "deployment-1", Status: state.Queued}, state.Environment{ID: state.ID(project, intent), URL: "https://123-myproject.preview.example.com"}, nil
+	return state.Attempt{ID: "deployment-1", Status: state.Queued}, state.Environment{ID: state.ID(project, intent), URL: "https://myproject-123.preview.example.com"}, nil
 }
 func (s *stubService) ListEnvironments() ([]state.Environment, error) {
 	return []state.Environment{}, nil
@@ -80,7 +80,7 @@ func TestDeploymentRequestAuthenticationAndResponse(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.ID != "deployment-1" || response.Status != "queued" || response.URL != "https://123-myproject.preview.example.com" {
+	if response.ID != "deployment-1" || response.Status != "queued" || response.URL != "https://myproject-123.preview.example.com" {
 		t.Fatalf("response = %+v", response)
 	}
 }

@@ -199,7 +199,7 @@ func TestSubmitIsAsyncAndSerialPerEnvironment(t *testing.T) {
 	defer s.Close()
 	commit := strings.Repeat("a", 40)
 	attempt, env, err := s.Submit("myproject", 123, commit)
-	if err != nil || attempt.Status != state.Queued || env.URL != "https://123-myproject.preview.example.com" {
+	if err != nil || attempt.Status != state.Queued || env.URL != "https://myproject-123.preview.example.com" {
 		t.Fatalf("submit = %+v, %+v, %v", attempt, env, err)
 	}
 	select {
@@ -390,5 +390,48 @@ func TestRuntimeCandidateTransitionsAndPreservesActiveOnFailure(t *testing.T) {
 			}
 			t.Fatal("runtime candidate did not finish")
 		})
+	}
+}
+
+func TestExistingDeploymentUsesProjectFirstURL(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	store, err := state.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := state.Attempt{
+		ID: "deployment-0123456789abcdef0123456789abcdef", Commit: strings.Repeat("a", 40),
+		Status: state.Healthy, Port: 12344,
+	}
+	stored := state.Environment{
+		ID: state.ID("myproject", 123), Project: "myproject", Intent: 123,
+		URL: "https://123-myproject.preview.example.com", ActiveDeploymentID: attempt.ID,
+		ActiveCommit: attempt.Commit, Attempts: []state.Attempt{attempt},
+	}
+	if err := store.Save(stored); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(testConfig(root), store, fakeVerifier{}, fakeRunner{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	const want = "https://myproject-123.preview.example.com"
+	env, err := s.GetEnvironment(stored.ID)
+	if err != nil || env.URL != want {
+		t.Fatalf("environment URL = %q, %v", env.URL, err)
+	}
+	envs, err := s.ListEnvironments()
+	if err != nil || len(envs) != 1 || envs[0].URL != want {
+		t.Fatalf("listed environments = %+v, %v", envs, err)
+	}
+	_, env, err = s.GetDeployment(attempt.ID)
+	if err != nil || env.URL != want {
+		t.Fatalf("deployment URL = %q, %v", env.URL, err)
+	}
+	port, err := s.ActivePort(stored.Project, stored.Intent)
+	if err != nil || port != attempt.Port {
+		t.Fatalf("active port = %d, %v", port, err)
 	}
 }

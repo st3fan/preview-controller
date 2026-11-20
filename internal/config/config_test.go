@@ -47,7 +47,7 @@ func TestLoadAndURL(t *testing.T) {
 		t.Fatal("token environment variable was not loaded")
 	}
 	url, err := loaded.URL("myproject", 123)
-	if err != nil || url != "https://123-myproject.preview.example.com" {
+	if err != nil || url != "https://myproject-123.preview.example.com" {
 		t.Fatalf("URL = %q, %v", url, err)
 	}
 	if strings.Contains(string(data), "secret-value") {

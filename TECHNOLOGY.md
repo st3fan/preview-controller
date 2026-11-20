@@ -16,7 +16,7 @@
 ## Hosting and deployment
 
 - Run the controller under systemd on a dedicated self-hosted Linux preview server. Run preview attempts as separate Docker Compose projects on that host.
-- The operator configures Caddy, wildcard DNS, and TLS once. Caddy forwards `*.preview.example.com` to the controller. Stable preview hostnames use the configurable flat form `<intent>-<project>.preview.example.com`.
+- The operator configures Caddy, wildcard DNS, and TLS once. Caddy forwards `*.preview.example.com` to the controller. Stable preview hostnames use the configurable flat form `<project>-<intent>.preview.example.com`.
 - Restrict the dashboard and deployment API to the home-lab network. Authenticate deployment requests with a shared bearer secret. A valid authenticated request is approval for the exact commit; the controller also verifies the commit in the configured public repository.
 - Build a replacement alongside the working environment. Change the Go proxy's active target only after health checks pass, and preserve the previous working preview if a replacement fails.
 - Treat fetched code and Compose configuration as host-affecting inputs. Use a dedicated preview host and reject privileged containers, host networking/namespaces, devices, Docker socket access, host mounts outside the checkout, host-executed providers, and unsafe indirect file references. Unsupported Compose features fail closed.

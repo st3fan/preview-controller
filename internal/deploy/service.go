@@ -105,7 +105,7 @@ func (s *Service) Submit(project string, intent int64, commit string) (state.Att
 	}
 	env, err := s.store.Load(project, intent)
 	if errors.Is(err, state.ErrNotFound) {
-		env = state.Environment{ID: state.ID(project, intent), Project: project, Intent: intent, URL: url, Attempts: []state.Attempt{}}
+		env = state.Environment{ID: state.ID(project, intent), Project: project, Intent: intent, Attempts: []state.Attempt{}}
 	} else if err != nil {
 		return state.Attempt{}, state.Environment{}, err
 	}
@@ -132,6 +132,7 @@ func (s *Service) Submit(project string, intent int64, commit string) (state.Att
 	}
 	now := time.Now().UTC()
 	attempt := state.Attempt{ID: id, Commit: strings.ToLower(commit), Status: state.Queued, CreatedAt: now, UpdatedAt: now}
+	env.URL = url
 	env.Attempts = append(env.Attempts, attempt)
 	env.UpdatedAt = now
 	if err := s.store.Save(env); err != nil {
@@ -157,13 +158,21 @@ func (s *Service) GetEnvironment(id string) (state.Environment, error) {
 	if err != nil || intent < 1 {
 		return state.Environment{}, state.ErrNotFound
 	}
-	return s.store.Load(parts[0], intent)
+	env, err := s.store.Load(parts[0], intent)
+	if err != nil {
+		return state.Environment{}, err
+	}
+	s.refreshPreviewURL(&env)
+	return env, nil
 }
 
 func (s *Service) ListEnvironments() ([]state.Environment, error) {
 	envs, err := s.store.List()
 	if err != nil {
 		return nil, err
+	}
+	for i := range envs {
+		s.refreshPreviewURL(&envs[i])
 	}
 	sort.Slice(envs, func(i, j int) bool {
 		if envs[i].Project != envs[j].Project {
@@ -182,11 +191,19 @@ func (s *Service) GetDeployment(id string) (state.Attempt, state.Environment, er
 	for _, env := range envs {
 		for _, attempt := range env.Attempts {
 			if attempt.ID == id {
+				s.refreshPreviewURL(&env)
 				return attempt, env, nil
 			}
 		}
 	}
 	return state.Attempt{}, state.Environment{}, state.ErrNotFound
+}
+
+// Derive the URL from current configuration so stored deployments need no migration.
+func (s *Service) refreshPreviewURL(env *state.Environment) {
+	if url, err := s.cfg.URL(env.Project, env.Intent); err == nil {
+		env.URL = url
+	}
 }
 
 func (s *Service) verify(project string, intent int64, id, repository, commit string) {

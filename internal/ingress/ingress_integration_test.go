@@ -163,7 +163,7 @@ func TestFullPreviewLifecycle(t *testing.T) {
 	}
 	preview := func(want string) {
 		t.Helper()
-		r := httptest.NewRequest(http.MethodGet, "http://123-fixture.preview.example.com/", nil)
+		r := httptest.NewRequest(http.MethodGet, "http://fixture-123.preview.example.com/", nil)
 		w := httptest.NewRecorder()
 		ingress.Handler(cfg, service).ServeHTTP(w, r)
 		if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != want {
@@ -207,7 +207,7 @@ func TestFullPreviewLifecycle(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	r := httptest.NewRequest(http.MethodGet, "http://123-fixture.preview.example.com/", nil)
+	r := httptest.NewRequest(http.MethodGet, "http://fixture-123.preview.example.com/", nil)
 	w := httptest.NewRecorder()
 	ingress.Handler(cfg, service).ServeHTTP(w, r)
 	if w.Code != http.StatusServiceUnavailable {

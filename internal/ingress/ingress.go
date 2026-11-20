@@ -67,11 +67,11 @@ func (h *handler) parseHost(host string) (string, int64, bool) {
 		return "", 0, false
 	}
 	label := strings.TrimSuffix(host, suffix)
-	separator := strings.IndexByte(label, '-')
+	separator := strings.LastIndexByte(label, '-')
 	if separator < 1 {
 		return "", 0, false
 	}
-	intentText, project := label[:separator], label[separator+1:]
+	project, intentText := label[:separator], label[separator+1:]
 	if _, ok := h.cfg.Projects[project]; !ok {
 		return "", 0, false
 	}
