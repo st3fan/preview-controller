@@ -56,7 +56,7 @@ func run(settings string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	managementMux := http.NewServeMux()
-	dashboard.Register(managementMux, ctx, service.ListEnvironments, store.Changes)
+	dashboard.Register(managementMux, ctx, cfg.Projects, service.ListEnvironments, store.Changes)
 	dashboard.RegisterLogs(managementMux, ctx, store.Load, runner.OpenLogs)
 	managementMux.Handle("/", api.Handler(service, cfg.Token()))
 	management := &http.Server{

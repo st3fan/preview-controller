@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/st3fan/preview-controller/internal/config"
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
@@ -22,7 +23,8 @@ func TestDashboard(t *testing.T) {
 	}
 	shutdown, stop := context.WithCancel(context.Background())
 	mux := http.NewServeMux()
-	Register(mux, shutdown, store.List, store.Changes)
+	projects := map[string]config.Project{"alpha": {Repository: "https://github.com/example/alpha.git"}}
+	Register(mux, shutdown, projects, store.List, store.Changes)
 	server := httptest.NewUnstartedServer(mux)
 	server.Config.WriteTimeout = 100 * time.Millisecond
 	server.Start()
@@ -33,7 +35,7 @@ func TestDashboard(t *testing.T) {
 
 	page := readPage(t, client, server.URL+"/", http.StatusOK)
 	requireText(t, page, "No preview environments yet.", `sse-connect="/dashboard/events"`, `sse-swap="environments"`)
-	for _, name := range []string{"htmx-2.0.11.min.js", "sse-2.2.4.js", "dashboard.css"} {
+	for _, name := range []string{"htmx-2.0.11.min.js", "sse-2.2.4.js", "dashboard.css", "theme.js"} {
 		requireText(t, page, "/dashboard/assets/"+name)
 		readPage(t, client, server.URL+"/dashboard/assets/"+name, http.StatusOK)
 	}
@@ -69,6 +71,7 @@ func TestDashboard(t *testing.T) {
 	requireText(t, event, "<h2>alpha</h2>", "#18", env.URL, active, ">failed<", `href="/dashboard/logs/alpha/18/deployment-0123456789abcdef0123456789abcdef">Live logs`)
 
 	env.Intent = 19
+	env.ActiveCommit = ""
 	env.ID = state.ID(env.Project, env.Intent)
 	if err := store.Save(env); err != nil {
 		t.Fatal(err)
@@ -79,7 +82,17 @@ func TestDashboard(t *testing.T) {
 		t.Fatalf("expected one project group in %s", event)
 	}
 
+	legacy := state.Environment{ID: state.ID("legacy", 20), Project: "legacy", Intent: 20, ActiveCommit: active}
+	if err := store.Save(legacy); err != nil {
+		t.Fatal(err)
+	}
+	event = readEvent(t, events)
 	for _, body := range []string{event, readPage(t, client, server.URL+"/", http.StatusOK)} {
+		requireText(t, body,
+			`href="https://github.com/example/alpha/issues/18" target="_blank" rel="noopener">#18</a>`,
+			`href="https://github.com/example/alpha/commit/`+active+`" target="_blank" rel="noopener"><code title="`+active+`">0123456</code></a>`,
+			`<td>None</td>`, `<th scope="row">#20</th>`, `<td><code title="`+active+`">0123456</code></td>`,
+		)
 		for _, sensitive := range []string{"private command output", "/private/workspace"} {
 			if strings.Contains(body, sensitive) {
 				t.Fatalf("dashboard exposed %q", sensitive)
@@ -102,7 +115,7 @@ func TestDashboard(t *testing.T) {
 
 func TestUnavailableDashboard(t *testing.T) {
 	mux := http.NewServeMux()
-	Register(mux, t.Context(), func() ([]state.Environment, error) {
+	Register(mux, t.Context(), nil, func() ([]state.Environment, error) {
 		return nil, errors.New("private state path")
 	}, nil)
 	page := httptest.NewRecorder()
