@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
-      PREVIEW_SERVER_TOKEN: ${PREVIEW_SERVER_TOKEN:?export PREVIEW_SERVER_TOKEN before starting the controller}
+      - PREVIEW_SERVER_TOKEN
     volumes:
       - type: bind
         source: ${PREVIEW_SERVER_CONFIG:-/etc/preview-server.json}
