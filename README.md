@@ -8,10 +8,71 @@ stack. When the new stack passes health checks, its stable preview URL switches
 to the new loopback port. The previous stack stays available if the candidate
 fails.
 
-## Build and run
+## Run with Docker Compose
 
-Use the [Docker Compose installation](docs/installation.md#docker-compose)
-or run the controller as a native executable.
+Use a dedicated Linux host with rootful Docker Engine and the Docker Compose
+plugin. The controller gets host-level access through the Docker socket.
+
+1. Clone the repository and prepare the workspace. For a fresh installation,
+   install the example settings. If you already have
+   `/etc/preview-server.json`, edit that file in place.
+
+   ```bash
+   git clone https://github.com/st3fan/preview-controller.git
+   cd preview-controller
+   sudo install -d -o root -g root -m 0700 /srv/preview-server
+   ```
+
+   On a fresh installation, run:
+
+   ```bash
+   sudo install -m 0600 config/preview-server.example.json /etc/preview-server.json
+   ```
+
+2. Edit the settings with `sudoedit /etc/preview-server.json`. Replace the
+   example project with your public GitHub repository and set its Compose file,
+   public service, port, and health path. Set `preview_domain` to your preview
+   domain. Keep these values for the shipped Compose definition:
+
+   | Setting | Value |
+   | --- | --- |
+   | `state_root` | `/var/lib/preview-server` |
+   | `workspace_root` | `/srv/preview-server` |
+   | `deployment_token_env` | `PREVIEW_SERVER_TOKEN` |
+
+3. From the repository directory, enter your deployment bearer token and
+   build and start the controller. Use the same token in deployment requests.
+
+   ```bash
+   read -rsp 'Deployment bearer token: ' PREVIEW_SERVER_TOKEN
+   export PREVIEW_SERVER_TOKEN
+   docker compose up -d --build
+   unset PREVIEW_SERVER_TOKEN
+   ```
+
+   Supply the token again when recreating the controller.
+
+4. Check the service on the preview host. With the example listener settings,
+   the health endpoint returns HTTP 204 and the dashboard is at
+   `http://127.0.0.1:8080/`.
+
+   ```bash
+   docker compose ps
+   docker compose logs --tail=50 controller
+   curl -i http://127.0.0.1:8080/healthz
+   ```
+
+For preview URLs, point wildcard DNS at Caddy and configure Caddy to forward
+preview requests to `127.0.0.1:8081`. Then submit a candidate using the
+[deployment API](#deployment-api). See the [installation guide](docs/installation.md#caddy-and-preview-ingress)
+for the Caddy configuration and [Compose settings](docs/installation.md#docker-compose)
+for custom paths.
+
+Use `docker compose stop` to stop the controller. Active previews keep running.
+Before uninstalling, remove them through the deployment API so the controller
+can clean up their containers and workspaces.
+
+## Run as a native executable
 
 Use Go 1.27 or newer. Build a Linux executable with CGO disabled; set
 `GOARCH` to the preview host's architecture when cross-compiling:
