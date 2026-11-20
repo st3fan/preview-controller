@@ -1,0 +1,47 @@
+{{define "detail"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Project}} #{{.Intent}} · Preview environments</title>
+  <script src="/dashboard/assets/theme.js"></script>
+  <link rel="stylesheet" href="/dashboard/assets/dashboard.css">
+</head>
+<body>
+  <main>
+    <nav aria-label="Dashboard"><a href="/">Preview environments</a></nav>
+    <header class="page-header">
+      <h1>{{.Project}} {{template "intent-label" .}}</h1>
+      {{template "theme-toggle"}}
+    </header>
+    <p>{{if .URL}}<a href="{{.URL}}">Open preview</a>{{end}}{{if .IssueURL}}{{if .URL}} · {{end}}<a href="{{.IssueURL}}" target="_blank" rel="noopener">GitHub issue</a>{{end}}
+    {{if .Deleting}} · Deleting{{else if .LifecycleOperation}} · {{.LifecycleOperation}}{{else if .DeleteAt}} · Archived{{end}}</p>
+    {{$project := .Project}}{{$intent := .Intent}}
+    <section>
+      <h2>Active deployment</h2>
+      {{with .Active}}
+      <p>{{template "attempt-summary" .}}
+        {{if .LiveLogs}} · <a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}" target="_blank" rel="noopener">Live logs</a>{{end}}
+      </p>
+      <p>Submitted {{template "attempt-time" .CreatedAt}} · Updated {{template "attempt-time" .UpdatedAt}}</p>
+      {{else}}<p>No active deployment.</p>{{end}}
+    </section>
+    <section>
+      <h2>Recent attempts</h2>
+      {{range .Recent}}
+      <article>
+        <p>{{template "attempt-summary" .}}
+          {{if .LiveLogs}} · <a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}" target="_blank" rel="noopener">Live logs</a>{{end}}
+        </p>
+        <p>Submitted {{template "attempt-time" .CreatedAt}} · Updated {{template "attempt-time" .UpdatedAt}}</p>
+      </article>
+      {{else}}<p>No deployment attempts.</p>{{end}}
+    </section>
+  </main>
+</body>
+</html>
+{{end}}
+
+{{define "attempt-summary"}}<code>{{.Commit}}</code> · <span class="status {{.Status}}">{{.Status}}</span>{{end}}
+{{define "attempt-time"}}<time datetime="{{.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.UTC.Format "Jan 2, 2006 15:04:05 UTC"}}</time>{{end}}

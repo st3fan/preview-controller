@@ -18,10 +18,10 @@ import (
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
-//go:embed dashboard.html assets
+//go:embed dashboard.html detail.html assets
 var files embed.FS
 
-var templates = template.Must(template.ParseFS(files, "dashboard.html"))
+var templates = template.Must(template.ParseFS(files, "dashboard.html", "detail.html"))
 
 var commitSHA = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
@@ -91,7 +91,7 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 					break
 				}
 			}
-			if !env.Deleting && !row.Archived && env.LifecycleOperation == "" {
+			if liveLogsAvailable(env) {
 				for _, attempt := range env.Attempts {
 					if hasLogs(attempt) {
 						row.Logs = append(row.Logs, attempt)
@@ -125,9 +125,7 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 			http.Error(w, "Could not render dashboard", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+		setPageHeaders(w)
 		if data.Unavailable {
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}

@@ -16,10 +16,7 @@
   <main>
     <header class="page-header">
       <h1>Preview environments</h1>
-      <button id="theme-toggle" type="button" aria-label="Dark theme" aria-pressed="false" hidden>
-        <span class="theme-icon moon" aria-hidden="true">☾</span>
-        <span class="theme-icon sun" aria-hidden="true">☀</span>
-      </button>
+      {{template "theme-toggle"}}
     </header>
     <p id="delete-status" role="status"></p>
     <div hx-ext="sse" sse-connect="/dashboard/events">
@@ -64,7 +61,7 @@
         {{$project := .Project}}
         <tr>
           <th scope="row">{{if .IntentURL}}<a href="{{.IntentURL}}" target="_blank" rel="noopener">{{template "intent-label" .}}</a>{{else}}{{template "intent-label" .}}{{end}}</th>
-          <td>{{if .Archived}}{{$project}}{{else if or (eq .Status "archiving") (eq .Status "deleting")}}Offline{{else}}<a href="{{.URL}}">Open preview</a>{{end}}</td>
+          <td>{{if .Archived}}{{$project}}{{else if or (eq .Status "archiving") (eq .Status "deleting")}}Offline{{else}}<a href="{{.URL}}">Open preview</a>{{end}} · <a href="/dashboard/previews/{{$project}}/{{$intent}}">Details</a></td>
           <td>{{if .CommitURL}}<a href="{{.CommitURL}}" target="_blank" rel="noopener"><code title="{{.Commit}}">{{.ShortCommit}}</code></a>{{else if .Commit}}<code title="{{.Commit}}">{{.ShortCommit}}</code>{{else}}None{{end}}</td>
           <td>
             <span class="status{{if eq .Health.Status "Unhealthy"}} failed{{end}}">{{.Health.Status}}</span>
@@ -83,3 +80,10 @@
 {{end}}
 
 {{define "intent-label"}}#{{.Intent}}{{with .IssueTitle}} {{.}}{{end}}{{end}}
+
+{{define "theme-toggle"}}
+      <button id="theme-toggle" type="button" aria-label="Dark theme" aria-pressed="false" hidden>
+        <span class="theme-icon moon" aria-hidden="true">☾</span>
+        <span class="theme-icon sun" aria-hidden="true">☀</span>
+      </button>
+{{end}}
