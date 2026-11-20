@@ -33,13 +33,16 @@ func (a detailAttempt) TimeToPreview() string {
 
 type detailView struct {
 	state.Environment
-	IssueURL      string
-	IssueTitle    string
-	RepositoryURL string
-	GitHubEnabled bool
-	GitHub        githubmeta.Result
-	Active        *detailAttempt
-	Recent        []detailAttempt
+	IssueURL                  string
+	IssueTitle                string
+	RepositoryURL             string
+	GitHubEnabled             bool
+	GitHub                    githubmeta.Result
+	Active                    *detailAttempt
+	Recent                    []detailAttempt
+	Activity                  []activityEvent
+	ActivityPartial           bool
+	DeploymentActivityPartial bool
 }
 
 func liveLogsAvailable(env state.Environment) bool {
@@ -104,6 +107,7 @@ func registerDetail(mux *http.ServeMux, cfg config.Config, load func(string, int
 				}
 			}
 		}
+		data.buildActivity()
 		var page bytes.Buffer
 		if err := templates.ExecuteTemplate(&page, "detail", data); err != nil {
 			http.Error(w, "Could not render preview", http.StatusInternalServerError)

@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -57,8 +58,9 @@ func TestPreviewDetail(t *testing.T) {
 	if strings.Contains(page, "<script>alert") {
 		t.Fatal("diagnostics rendered as markup")
 	}
-	if strings.Contains(page, env.Attempts[1].Commit) || strings.Count(page, "<article>") != 10 ||
-		strings.Index(page, env.Attempts[11].Commit) >= strings.Index(page, env.Attempts[2].Commit) {
+	_, recent, _ := strings.Cut(page, "<h2>Recent attempts</h2>")
+	if strings.Contains(recent, env.Attempts[1].Commit) || strings.Count(recent, "<article ") != 10 ||
+		strings.Index(recent, env.Attempts[11].Commit) >= strings.Index(recent, env.Attempts[2].Commit) {
 		t.Fatalf("unexpected recent attempt history: %s", page)
 	}
 	for _, missing := range []string{"0", "unknown", "19"} {
@@ -71,17 +73,37 @@ func TestDetailGitHubMetadata(t *testing.T) {
 		GitHubTokenEnv: "PREVIEW_GITHUB_TOKEN",
 		Projects:       map[string]config.Project{"alpha": {Repository: "https://github.com/example/alpha.git/"}},
 	}
-	env := state.Environment{Project: "alpha", Intent: 51, Attempts: []state.Attempt{{IssueTitle: "Deployment title"}}}
+	opened := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	commit := strings.Repeat("a", 40)
+	env := state.Environment{Project: "alpha", Intent: 51, Attempts: []state.Attempt{
+		{ID: "first", IssueTitle: "Deployment title", Commit: commit, CreatedAt: opened.Add(4 * time.Minute),
+			ActivatedAt: new(opened.Add(5 * time.Minute)), Status: state.Retired},
+		{ID: "retry", Commit: commit, CreatedAt: opened.Add(4 * time.Minute),
+			UpdatedAt: opened.Add(6 * time.Minute), Status: state.Failed},
+		{ID: "legacy", Status: state.Failed},
+	}}
 	load := func(string, int64) (state.Environment, error) { return env, nil }
 	mux := http.NewServeMux()
 	registerDetail(mux, cfg, load, func(_ context.Context, repository string, intent int64) githubmeta.Result {
 		if repository != "example/alpha" || intent != 51 {
 			t.Fatalf("unexpected lookup %s #%d", repository, intent)
 		}
+		var earlier githubmeta.Pull
+		if err := json.Unmarshal([]byte(`{
+			"number":56, "title":"Earlier PR", "createdAt":"2026-11-20T12:01:00Z",
+			"reviews":{"nodes":[{"submittedAt":"2026-11-20T12:02:00Z","url":"https://github.com/example/alpha/pull/56#pullrequestreview-42"}, {}]},
+			"commits":{"pageInfo":{"hasPreviousPage":true},"nodes":[{"commit":{"oid":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","committedDate":"2026-11-20T12:00:30Z"}}]}
+		}`), &earlier); err != nil {
+			t.Fatal(err)
+		}
 		return githubmeta.Result{
-			Intent:  &githubmeta.Issue{Number: 51, Title: "<script>live title</script>", State: "OPEN"},
+			Intent:  &githubmeta.Issue{Number: 51, Title: "<script>live title</script>", State: "OPEN", CreatedAt: opened},
 			Related: []githubmeta.Issue{{Number: 52, Title: "Related work", State: "CLOSED"}},
-			Pulls:   []githubmeta.Pull{{Number: 57, Title: "<b>Pull request</b>", State: "MERGED"}},
+			Pulls: []githubmeta.Pull{
+				{Number: 57, Title: "<b>Pull request</b>", State: "MERGED",
+					CreatedAt: opened.Add(3 * time.Minute), MergedAt: new(opened.Add(7 * time.Minute))},
+				earlier,
+			},
 			Partial: true,
 		}
 	})
@@ -96,6 +118,20 @@ func TestDetailGitHubMetadata(t *testing.T) {
 		"https://github.com/example/alpha/pull/57", "&lt;b&gt;Pull request&lt;/b&gt;", "MERGED", "CLOSED",
 		"Stack order unavailable.", "GitHub returned incomplete results.", "#activity")
 
+	_, timeline, _ := strings.Cut(page, "<h2 id=\"activity\">Activity timeline</h2>")
+	timeline, _, _ = strings.Cut(timeline, "</section>")
+	requireText(t, timeline, "GitHub activity is incomplete.", "Controller deployment activity is incomplete.", "GitHub", "Controller",
+		"/pull/56#pullrequestreview-42", "/pull/56/commits/"+commit)
+	for _, event := range []string{"Issue #51 opened", "PR #56 commit recorded", "PR #56 opened", "PR #56 review submitted", "PR #57 opened",
+		"Deployment requested</a> · first", "Deployment requested</a> · retry",
+		"Preview activated", "Deployment failed", "PR #57 merged"} {
+		_, remaining, found := strings.Cut(timeline, event)
+		if !found {
+			t.Fatalf("missing or out-of-order event %q", event)
+		}
+		timeline = remaining
+	}
+
 	mux = http.NewServeMux()
 	registerDetail(mux, cfg, load, func(context.Context, string, int64) githubmeta.Result { return githubmeta.Result{} })
 	resp = httptest.NewRecorder()
@@ -103,5 +139,6 @@ func TestDetailGitHubMetadata(t *testing.T) {
 	if resp.Code != http.StatusOK {
 		t.Fatalf("fallback returned HTTP %d", resp.Code)
 	}
-	requireText(t, resp.Body.String(), "Deployment title", "GitHub metadata unavailable.")
+	requireText(t, resp.Body.String(), "Deployment title", "GitHub metadata unavailable.", "GitHub activity is unavailable.",
+		"Deployment requested", "Preview activated", "Deployment failed", "Time to preview 1m0s")
 }
