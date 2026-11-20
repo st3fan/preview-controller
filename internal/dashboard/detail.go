@@ -78,7 +78,7 @@ func registerDetail(mux *http.ServeMux, cfg config.Config, load func(string, int
 			http.Error(w, "Could not load preview", http.StatusServiceUnavailable)
 			return
 		}
-		data := detailView{Environment: env, Health: monitor.Lookup(env)}
+		data := detailView{Environment: env, Health: monitor.Lookup(env), IssueTitle: submittedTitle(env.Attempts)}
 		if projectConfig, ok := cfg.Projects[project]; ok {
 			if repository, err := url.Parse(projectConfig.Repository); err == nil {
 				name := strings.TrimSuffix(strings.Trim(repository.Path, "/"), ".git")
@@ -99,9 +99,6 @@ func registerDetail(mux *http.ServeMux, cfg config.Config, load func(string, int
 			item := detailAttempt{Attempt: attempt, LiveLogs: liveActionsAvailable(env) && hasLogs(attempt), Diagnostic: env.Diagnostics[attempt.ID]}
 			if data.RepositoryURL != "" && commitOID(attempt.Commit) {
 				item.CommitURL = data.RepositoryURL + "/commit/" + attempt.Commit
-			}
-			if data.IssueTitle == "" {
-				data.IssueTitle = attempt.IssueTitle
 			}
 			if env.ActiveDeploymentID != "" && attempt.ID == env.ActiveDeploymentID {
 				data.Active = &item

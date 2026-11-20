@@ -8,11 +8,12 @@ import (
 	"html/template"
 	"io"
 	"net/http"
-	"slices"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/st3fan/preview-controller/internal/config"
+	"github.com/st3fan/preview-controller/internal/githubmeta"
 	"github.com/st3fan/preview-controller/internal/health"
 	"github.com/st3fan/preview-controller/internal/state"
 )
@@ -68,7 +69,15 @@ func appendEnvironment(groups []project, row environment) []project {
 	return groups
 }
 
-func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]config.Project, list func() ([]state.Environment, error), changes func() <-chan struct{}, monitor *health.Monitor) {
+func Register(mux *http.ServeMux, shutdown context.Context, cfg config.Config, list func() ([]state.Environment, error), changes func() <-chan struct{}, monitor *health.Monitor) {
+	titles := newIssueTitles()
+	if token := strings.TrimSpace(os.Getenv(cfg.GitHubTokenEnv)); token != "" {
+		go titles.run(shutdown, cfg.Projects, list, changes, githubmeta.New(token).LookupTitle)
+	}
+	registerDashboard(mux, shutdown, cfg.Projects, list, changes, monitor, titles)
+}
+
+func registerDashboard(mux *http.ServeMux, shutdown context.Context, projects map[string]config.Project, list func() ([]state.Environment, error), changes func() <-chan struct{}, monitor *health.Monitor, titles *issueTitles) {
 	load := func() view {
 		envs, err := list()
 		if err != nil {
@@ -98,11 +107,9 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 			if len(env.Attempts) > 0 {
 				row.Latest = &env.Attempts[len(env.Attempts)-1]
 			}
-			for _, attempt := range slices.Backward(env.Attempts) {
-				if attempt.IssueTitle != "" {
-					row.IssueTitle = attempt.IssueTitle
-					break
-				}
+			row.IssueTitle = submittedTitle(env.Attempts)
+			if row.IssueTitle == "" {
+				row.IssueTitle = titles.get(state.ID(env.Project, env.Intent))
 			}
 			if liveActionsAvailable(env) {
 				for _, attempt := range env.Attempts {
@@ -144,7 +151,7 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 			w.Header().Set("Content-Type", "text/event-stream")
 			return
 		}
-		stream(w, r, shutdown, load, changes, monitor.Changes)
+		stream(w, r, shutdown, load, changes, monitor.Changes, titles.changes)
 	})
 	for _, name := range []string{"htmx-2.0.11.min.js", "sse-2.2.4.js", "dashboard.css", "theme.js", "delete.js", "trash.svg", "icons.svg", "bootstrap-reboot-5.3.8.min.css"} {
 		mux.HandleFunc("GET /dashboard/assets/"+name, func(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +160,7 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 	}
 }
 
-func stream(w http.ResponseWriter, r *http.Request, shutdown context.Context, load func() view, changes, healthChanges func() <-chan struct{}) {
+func stream(w http.ResponseWriter, r *http.Request, shutdown context.Context, load func() view, changes, healthChanges, titleChanges func() <-chan struct{}) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	controller := http.NewResponseController(w)
@@ -176,6 +183,7 @@ func stream(w http.ResponseWriter, r *http.Request, shutdown context.Context, lo
 	for {
 		changed := changes()
 		healthChanged := healthChanges()
+		titlesChanged := titleChanges()
 		var fragment bytes.Buffer
 		if err := templates.ExecuteTemplate(&fragment, "environments", load()); err != nil {
 			return
@@ -195,6 +203,8 @@ func stream(w http.ResponseWriter, r *http.Request, shutdown context.Context, lo
 			case <-shutdown.Done():
 				return
 			case <-changed:
+				waiting = false
+			case <-titlesChanged:
 				waiting = false
 			case <-healthChanged:
 				waiting = false

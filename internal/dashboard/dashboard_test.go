@@ -26,7 +26,7 @@ func TestDashboard(t *testing.T) {
 	mux := http.NewServeMux()
 	projects := map[string]config.Project{"alpha": {Repository: "https://github.com/example/alpha.git"}}
 	monitor := health.New(store, projects, func(context.Context, int, string) error { return nil })
-	Register(mux, shutdown, projects, store.List, store.Changes, monitor)
+	Register(mux, shutdown, config.Config{Projects: projects}, store.List, store.Changes, monitor)
 	server := httptest.NewUnstartedServer(mux)
 	server.Config.WriteTimeout = 100 * time.Millisecond
 	server.Start()
@@ -131,7 +131,7 @@ func TestArchivedDashboardRow(t *testing.T) {
 	deadline := time.Date(2026, time.November, 27, 19, 0, 0, 0, time.UTC)
 	const archivedCommit = "0123456789abcdef0123456789abcdef01234567"
 	projects := map[string]config.Project{"demo": {Repository: "https://github.com/example/demo.git"}}
-	Register(mux, context.Background(), projects, func() ([]state.Environment, error) {
+	Register(mux, context.Background(), config.Config{Projects: projects}, func() ([]state.Environment, error) {
 		return []state.Environment{{
 			Project: "demo", Intent: 45, DeleteAt: &deadline, ActiveCommit: archivedCommit,
 			Attempts: []state.Attempt{{Commit: strings.Repeat("f", 40), Status: state.Failed}},
@@ -149,7 +149,7 @@ func TestArchivedDashboardRow(t *testing.T) {
 
 func TestUnavailableDashboard(t *testing.T) {
 	mux := http.NewServeMux()
-	Register(mux, t.Context(), nil, func() ([]state.Environment, error) {
+	Register(mux, t.Context(), config.Config{}, func() ([]state.Environment, error) {
 		return nil, errors.New("private state path")
 	}, nil, health.New(nil, nil, nil))
 	page := httptest.NewRecorder()
@@ -215,4 +215,68 @@ func TestControllerBuildLinks(t *testing.T) {
 	if got := controllerBuild(); got != (buildIdentity{"v1.2.3 / 0123456", controllerRepository + "/releases/tag/v1.2.3"}) {
 		t.Fatalf("release identity: %+v", got)
 	}
+}
+
+func TestDashboardBackfillsMissingTitles(t *testing.T) {
+	ctx, stop := context.WithCancel(t.Context())
+	defer stop()
+	store, err := state.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects := map[string]config.Project{"demo": {Repository: "https://github.com/example/repo.git/"}}
+	archived := time.Now()
+	for _, e := range []state.Environment{
+		{Project: "demo", Intent: 12},
+		{Project: "demo", Intent: 13, Attempts: []state.Attempt{{IssueTitle: "Submitted title"}, {}}},
+		{Project: "removed", Intent: 14},
+	} {
+		e.ID = state.ID(e.Project, e.Intent)
+		if err := store.Save(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	titles := newIssueTitles()
+	mux := http.NewServeMux()
+	registerDashboard(mux, ctx, projects, store.List, store.Changes, health.New(store, projects, nil), titles)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client := server.Client()
+	client.Timeout = 4 * time.Second
+	stream, err := client.Get(server.URL + "/dashboard/events")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	events := bufio.NewScanner(stream.Body)
+	requireText(t, readEvent(t, events), "#12</a>", "#13 Submitted title", "#14</a>")
+	alreadyFetched := false
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		titles.run(ctx, projects, store.List, store.Changes, func(_ context.Context, repo string, number int64) string {
+			if repo != "example/repo" || number != 12 {
+				t.Errorf("unexpected title lookup: %s #%d", repo, number)
+				return ""
+			}
+			if alreadyFetched {
+				t.Error("repeated title lookup")
+			}
+			alreadyFetched = true
+			return "A <real> title"
+		})
+	}()
+	defer func() { stop(); <-done }()
+	requireText(t, readEvent(t, events), "#12 A &lt;real&gt; title", "#13 Submitted title")
+	requireText(t, readPage(t, client, server.URL+"/", http.StatusOK), "#12 A &lt;real&gt; title", "#14</a>")
+	// Archiving preserves the cached title.
+	if err := store.Save(state.Environment{ID: state.ID("demo", 12), Project: "demo", Intent: 12, DeleteAt: &archived}); err != nil {
+		t.Fatal(err)
+	}
+	requireText(t, readEvent(t, events), "<h2>Archived</h2>", "#12 A &lt;real&gt; title")
+	// A later submission overrides the fallback on the live dashboard.
+	if err := store.Save(state.Environment{ID: state.ID("demo", 12), Project: "demo", Intent: 12, Attempts: []state.Attempt{{IssueTitle: "New submitted title"}}}); err != nil {
+		t.Fatal(err)
+	}
+	requireText(t, readEvent(t, events), "#12 New submitted title")
 }

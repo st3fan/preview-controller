@@ -110,33 +110,54 @@ type Pull struct {
 	HeadRepository repository
 }
 
-func (c *Client) Lookup(ctx context.Context, repositoryName string, number int64) Result {
+func (c *Client) queryIssue(ctx context.Context, repositoryName string, number int64, query string, response any) bool {
 	owner, repo, ok := strings.Cut(repositoryName, "/")
 	if !ok || owner == "" || repo == "" || number < 1 || number > 1<<31-1 {
-		return Result{}
+		return false
 	}
 	payload, err := json.Marshal(struct {
 		Query     string         `json:"query"`
 		Variables map[string]any `json:"variables"`
 	}{query, map[string]any{"owner": owner, "repo": repo, "number": number}})
 	if err != nil {
-		return Result{}
+		return false
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return Result{}
+		return false
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Content-Type", "application/json")
 	res, err := c.http.Do(req)
 	if err != nil {
-		return Result{}
+		return false
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return Result{}
+		return false
 	}
+	return json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(response) == nil
+}
 
+// LookupTitle reads only the root issue, without its PRs, reviews or sub-issues.
+func (c *Client) LookupTitle(ctx context.Context, repositoryName string, number int64) string {
+	const titleQuery = `query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) { issue(number: $number) { number title repository { nameWithOwner } } }
+ }`
+	var response struct {
+		Data struct{ Repository struct{ Issue *Issue } }
+	}
+	if !c.queryIssue(ctx, repositoryName, number, titleQuery, &response) {
+		return ""
+	}
+	issue := response.Data.Repository.Issue
+	if issue == nil || issue.Number != number || !strings.EqualFold(issue.Repository.NameWithOwner, repositoryName) {
+		return ""
+	}
+	return strings.TrimSpace(issue.Title)
+}
+
+func (c *Client) Lookup(ctx context.Context, repositoryName string, number int64) Result {
 	var response struct {
 		Data struct {
 			Repository struct {
@@ -148,7 +169,7 @@ func (c *Client) Lookup(ctx context.Context, repositoryName string, number int64
 		}
 		Errors []json.RawMessage
 	}
-	if err := json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&response); err != nil {
+	if !c.queryIssue(ctx, repositoryName, number, query, &response) {
 		return Result{}
 	}
 	root := response.Data.Repository.Issue
