@@ -80,6 +80,10 @@ func (s *Service) Close() {
 }
 
 func (s *Service) Submit(project string, intent int64, commit string) (state.Attempt, state.Environment, error) {
+	return s.SubmitWithIssueTitle(project, intent, commit, "")
+}
+
+func (s *Service) SubmitWithIssueTitle(project string, intent int64, commit, title string) (state.Attempt, state.Environment, error) {
 	projectCfg, ok := s.cfg.Projects[project]
 	if !ok {
 		return state.Attempt{}, state.Environment{}, ErrUnknownProject
@@ -131,7 +135,7 @@ func (s *Service) Submit(project string, intent int64, commit string) (state.Att
 		return state.Attempt{}, state.Environment{}, err
 	}
 	now := time.Now().UTC()
-	attempt := state.Attempt{ID: id, Commit: strings.ToLower(commit), Status: state.Queued, CreatedAt: now, UpdatedAt: now}
+	attempt := state.Attempt{ID: id, Commit: strings.ToLower(commit), IssueTitle: strings.TrimSpace(title), Status: state.Queued, CreatedAt: now, UpdatedAt: now}
 	env.URL = url
 	env.Attempts = append(env.Attempts, attempt)
 	env.UpdatedAt = now
@@ -344,25 +348,31 @@ func (s *Service) ActivePort(project string, intent int64) (int, error) {
 
 // PreviewRoute resolves the active target and fallback status from the same snapshot.
 func (s *Service) PreviewRoute(project string, intent int64) (int, state.Status, error) {
+	attempt, status, err := s.PreviewDeployment(project, intent)
+	return attempt.Port, status, err
+}
+
+// PreviewDeployment resolves the target and its metadata from the same snapshot.
+func (s *Service) PreviewDeployment(project string, intent int64) (state.Attempt, state.Status, error) {
 	env, err := s.store.Load(project, intent)
 	if err != nil {
-		return 0, "", err
+		return state.Attempt{}, "", err
 	}
 	if env.Deleting {
-		return 0, "", state.ErrNotFound
+		return state.Attempt{}, "", state.ErrNotFound
 	}
 	if env.ActiveDeploymentID != "" {
 		for _, attempt := range env.Attempts {
 			if attempt.ID == env.ActiveDeploymentID && attempt.Status == state.Healthy && attempt.Port > 0 && attempt.Port <= 65535 {
-				return attempt.Port, "", nil
+				return attempt, "", nil
 			}
 		}
-		return 0, "", state.ErrNotFound
+		return state.Attempt{}, "", state.ErrNotFound
 	}
 	if len(env.Attempts) > 0 {
-		return 0, env.Attempts[len(env.Attempts)-1].Status, nil
+		return state.Attempt{}, env.Attempts[len(env.Attempts)-1].Status, nil
 	}
-	return 0, "", state.ErrNotFound
+	return state.Attempt{}, "", state.ErrNotFound
 }
 
 func (s *Service) DeleteEnvironment(id string) error {

@@ -13,15 +13,18 @@ import (
 )
 
 type stubRouter struct {
-	port   int
-	status state.Status
+	port    int
+	status  state.Status
+	attempt state.Attempt
 }
 
-func (s stubRouter) PreviewRoute(project string, intent int64) (int, state.Status, error) {
+func (s stubRouter) PreviewDeployment(project string, intent int64) (state.Attempt, state.Status, error) {
 	if project != "my-project-7" || intent != 123 || (s.port == 0 && s.status == "") {
-		return 0, "", state.ErrNotFound
+		return state.Attempt{}, "", state.ErrNotFound
 	}
-	return s.port, s.status, nil
+	attempt := s.attempt
+	attempt.Port = s.port
+	return attempt, s.status, nil
 }
 
 func TestRoutesOnlyConfiguredStableHost(t *testing.T) {
@@ -97,6 +100,70 @@ func TestPreviewDeploymentStatus(t *testing.T) {
 			body := w.Body.String()
 			if !strings.Contains(body, tc.message) || strings.Contains(body, `http-equiv="refresh" content="3"`) != tc.refresh {
 				t.Fatalf("unexpected status page: %s", body)
+			}
+		})
+	}
+}
+
+func TestInspectorInjection(t *testing.T) {
+	const page = `<!doctype html><html><body><script>const marker = "</body>";</script><p>Preview</p></body></html>`
+	const title = "</script><b>Ticket title</b>"
+	for _, tc := range []struct {
+		name, destination, title string
+		enabled, want            bool
+	}{
+		{"document with title", "document", title, true, true},
+		{"older deployment", "document", "", true, true},
+		{"embedded document", "iframe", title, true, false},
+		{"HTML fetched by API client", "", title, true, false},
+		{"opted out", "document", title, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Header().Set("Content-Security-Policy", "default-src 'self'")
+				w.Header().Set("ETag", `"original"`)
+				_, _ = w.Write([]byte(page))
+			}))
+			defer backend.Close()
+			port, err := strconv.Atoi(backend.URL[strings.LastIndexByte(backend.URL, ':')+1:])
+			if err != nil {
+				t.Fatal(err)
+			}
+			attempt := state.Attempt{Port: port, Commit: strings.Repeat("a", 40), IssueTitle: tc.title}
+			cfg := config.Config{PreviewDomain: "preview.example.com", Projects: map[string]config.Project{
+				"my-project-7": {Repository: "https://github.com/example/project.git", PreviewInspector: tc.enabled},
+			}}
+			request := httptest.NewRequest(http.MethodGet, "http://my-project-7-123.preview.example.com/", nil)
+			request.Header.Set("Sec-Fetch-Dest", tc.destination)
+			request.Header.Set("Sec-Fetch-Mode", "navigate")
+			response := httptest.NewRecorder()
+			Handler(cfg, stubRouter{port: port, attempt: attempt}).ServeHTTP(response, request)
+			body := response.Body.String()
+			if got := response.Header().Get("Content-Security-Policy"); got != "default-src 'self'" {
+				t.Fatalf("CSP = %q", got)
+			}
+			if !tc.want {
+				if body != page || response.Header().Get("ETag") != `"original"` {
+					t.Fatal("response was transformed")
+				}
+				return
+			}
+			for _, want := range []string{`<p>Preview</p><script>`, `"IssueURL":"https://github.com/example/project/issues/123"`, `"CommitURL":"https://github.com/example/project/commit/` + attempt.Commit + `"`, `window.self !== window.top`} {
+				if !strings.Contains(body, want) {
+					t.Errorf("body missing %q", want)
+				}
+			}
+			label := `"Issue":"#123"`
+			if tc.title != "" {
+				label = `"Issue":"#123 \u003c/script\u003e\u003cb\u003eTicket title\u003c/b\u003e"`
+			}
+			if !strings.Contains(body, label) || strings.Contains(body, title) {
+				t.Errorf("expected safe issue label %q", label)
+			}
+			if response.Header().Get("ETag") != "" || response.Header().Get("Cache-Control") != "no-store" ||
+				response.Header().Get("Content-Length") != strconv.Itoa(len(body)) {
+				t.Error("transformed response has incorrect cache or length headers")
 			}
 		})
 	}

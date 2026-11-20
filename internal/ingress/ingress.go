@@ -16,7 +16,7 @@ import (
 )
 
 type Router interface {
-	PreviewRoute(string, int64) (int, state.Status, error)
+	PreviewDeployment(string, int64) (state.Attempt, state.Status, error)
 }
 
 type handler struct {
@@ -35,7 +35,8 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	port, status, err := h.router.PreviewRoute(project, intent)
+	attempt, status, err := h.router.PreviewDeployment(project, intent)
+	port := attempt.Port
 	if err == nil && port == 0 {
 		serveStatus(w, status)
 		return
@@ -62,6 +63,12 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
 			http.Error(w, "preview backend is unavailable", http.StatusBadGateway)
 		},
+	}
+	settings := h.cfg.Projects[project]
+	if settings.PreviewInspector && inspectorNavigation(r) {
+		proxy.ModifyResponse = func(response *http.Response) error {
+			return injectInspector(response, inspectorData(settings.Repository, h.cfg.DashboardOrigin, project, intent, attempt))
+		}
 	}
 	proxy.ServeHTTP(w, r)
 }

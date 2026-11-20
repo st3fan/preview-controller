@@ -29,6 +29,7 @@ const (
 )
 
 type Attempt struct {
+	IssueTitle     string    `json:"issue_title,omitempty"`
 	ID             string    `json:"id"`
 	Commit         string    `json:"commit"`
 	Status         Status    `json:"status"`

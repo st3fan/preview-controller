@@ -15,7 +15,7 @@ import (
 )
 
 type Service interface {
-	Submit(string, int64, string) (state.Attempt, state.Environment, error)
+	SubmitWithIssueTitle(string, int64, string, string) (state.Attempt, state.Environment, error)
 	ListEnvironments() ([]state.Environment, error)
 	GetEnvironment(string) (state.Environment, error)
 	GetDeployment(string) (state.Attempt, state.Environment, error)
@@ -38,9 +38,10 @@ func Handler(service Service, token string) http.Handler {
 			return
 		}
 		var input struct {
-			Project string `json:"project"`
-			Intent  int64  `json:"intent"`
-			Commit  string `json:"commit"`
+			Project    string `json:"project"`
+			Intent     int64  `json:"intent"`
+			Commit     string `json:"commit"`
+			IssueTitle string `json:"issue_title"`
 		}
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
 		decoder.DisallowUnknownFields()
@@ -56,7 +57,7 @@ func Handler(service Service, token string) http.Handler {
 			writeError(w, http.StatusBadRequest, "project, positive intent, and commit are required")
 			return
 		}
-		attempt, env, err := service.Submit(input.Project, input.Intent, input.Commit)
+		attempt, env, err := service.SubmitWithIssueTitle(input.Project, input.Intent, input.Commit, input.IssueTitle)
 		if err != nil {
 			switch {
 			case errors.Is(err, deploy.ErrUnknownProject):
