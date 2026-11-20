@@ -124,13 +124,13 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 	if err := validateResolved([]byte(output), cfg.PublicService, cfg.PublicPort, checkout); err != nil {
 		return result, fmt.Errorf("resolved Compose policy: %w", err)
 	}
-	if _, err := r.docker(ctx, 64<<10, append(args, "build")...); err != nil {
+	if _, err := r.docker(ctx, 2<<20, append(args, "build")...); err != nil {
 		return result, fmt.Errorf("build Compose stack: %w", err)
 	}
 	if err := progress(state.Starting, result); err != nil {
 		return result, err
 	}
-	if _, err := r.docker(ctx, 64<<10, append(args, "up", "-d", "--no-build", "--wait", "--wait-timeout", "180")...); err != nil {
+	if _, err := r.docker(ctx, 2<<20, append(args, "up", "-d", "--no-build", "--wait", "--wait-timeout", "180")...); err != nil {
 		return result, fmt.Errorf("start Compose stack: %w", err)
 	}
 	portText, err := r.docker(ctx, 1024, append(args, "port", cfg.PublicService, strconv.Itoa(cfg.PublicPort))...)
