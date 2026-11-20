@@ -112,7 +112,7 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 		}
 		stream(w, r, shutdown, load, changes)
 	})
-	for _, name := range []string{"htmx-2.0.11.min.js", "sse-2.2.4.js", "dashboard.css", "theme.js"} {
+	for _, name := range []string{"htmx-2.0.11.min.js", "sse-2.2.4.js", "dashboard.css", "theme.js", "delete.js", "trash.svg"} {
 		mux.HandleFunc("GET /dashboard/assets/"+name, func(w http.ResponseWriter, r *http.Request) {
 			http.ServeFileFS(w, r, files, "assets/"+name)
 		})

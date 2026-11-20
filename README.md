@@ -109,13 +109,18 @@ Docker is the source of runtime container state.
 
 ## Deployment API
 
-The management API and read-only dashboard are restricted to the configured home-lab listener.
+The management API and operator dashboard are restricted to the configured home-lab listener.
+Anyone who can reach the dashboard can delete previews. Keep the management
+listener accessible only to trusted operators.
 Open `/` on that listener to see preview links, active commits, and live deployment
 status grouped by project. Select **Live logs** next to a deployment attempt to
 see its last 100 lines per Compose service container, followed by new output.
 The log URL stays tied to that attempt during replacement. Logs become
 unavailable once the attempt is removed. Treat log URLs and output as operator
 information.
+
+Use the trash button on a dashboard row and confirm to remove the preview
+and its deployment history. If cleanup fails, use the same button to retry.
 
 Candidate requests require a full 40-character commit SHA and the bearer
 secret. The authenticated request is the approval to preview that commit.
