@@ -26,20 +26,23 @@
 <p role="status">Could not load preview environments.</p>
 {{else}}
 {{range .Projects}}
+{{$project := .Name}}
 <section>
   <h2>{{.Name}}</h2>
   <div class="table-scroll">
     <table aria-label="{{.Name}} previews">
       <thead>
-        <tr><th scope="col">Intent</th><th scope="col">Preview</th><th scope="col">Active commit</th><th scope="col">Latest deployment</th></tr>
+        <tr><th scope="col">Intent</th><th scope="col">Preview</th><th scope="col">Active commit</th><th scope="col">Latest deployment</th><th scope="col">Deployment logs</th></tr>
       </thead>
       <tbody>
       {{range .Environments}}
+        {{$intent := .Intent}}
         <tr>
           <th scope="row">#{{.Intent}}</th>
           <td><a href="{{.URL}}">Open preview</a></td>
           <td>{{if .Commit}}<code>{{.Commit}}</code>{{else}}None{{end}}</td>
           <td>{{if .Status}}<span class="status {{.Status}}">{{.Status}}</span>{{else}}No attempts{{end}}</td>
+          <td>{{range .Logs}}<div><a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}">Live logs</a> <code>{{.ID}}</code> <span class="status {{.Status}}">{{.Status}}</span></div>{{else}}Unavailable{{end}}</td>
         </tr>
       {{end}}
       </tbody>

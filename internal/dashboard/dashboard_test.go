@@ -58,7 +58,7 @@ func TestDashboard(t *testing.T) {
 		URL:          "https://alpha-18.preview.example.com",
 		ActiveCommit: active,
 		Attempts: []state.Attempt{
-			{Status: state.Healthy},
+			{ID: "deployment-0123456789abcdef0123456789abcdef", Status: state.Healthy, ComposeProject: "pv0123456789abcdef0123456789abcdef"},
 			{Status: state.Failed, Error: "private command output", Workspace: "/private/workspace"},
 		},
 	}
@@ -66,7 +66,7 @@ func TestDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	event := readEvent(t, events)
-	requireText(t, event, "<h2>alpha</h2>", "#18", env.URL, active, ">failed<")
+	requireText(t, event, "<h2>alpha</h2>", "#18", env.URL, active, ">failed<", `href="/dashboard/logs/alpha/18/deployment-0123456789abcdef0123456789abcdef">Live logs`)
 
 	env.Intent = 19
 	env.ID = state.ID(env.Project, env.Intent)

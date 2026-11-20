@@ -24,6 +24,7 @@ type environment struct {
 	URL    string
 	Commit string
 	Status state.Status
+	Logs   []state.Attempt
 }
 
 type project struct {
@@ -50,6 +51,13 @@ func Register(mux *http.ServeMux, shutdown context.Context, list func() ([]state
 			row := environment{Intent: env.Intent, URL: env.URL, Commit: env.ActiveCommit}
 			if len(env.Attempts) > 0 {
 				row.Status = env.Attempts[len(env.Attempts)-1].Status
+			}
+			if !env.Deleting {
+				for _, attempt := range env.Attempts {
+					if hasLogs(attempt) {
+						row.Logs = append(row.Logs, attempt)
+					}
+				}
 			}
 			group := &data.Projects[len(data.Projects)-1]
 			group.Environments = append(group.Environments, row)

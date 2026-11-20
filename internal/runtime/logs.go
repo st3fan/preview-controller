@@ -1,0 +1,53 @@
+package runtime
+
+import (
+	"context"
+	"errors"
+	"io"
+	"os"
+	"os/exec"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/st3fan/preview-controller/internal/state"
+)
+
+var ErrLogsUnavailable = errors.New("deployment logs unavailable")
+
+// OpenLogs checks for containers belonging to the attempt and prepares a log
+// follow that can run after the caller has sent the response headers.
+func (r *Runtime) OpenLogs(ctx context.Context, attempt state.Attempt) (func(io.Writer) error, error) {
+	if !attemptID.MatchString(attempt.ID) ||
+		attempt.ComposeProject != "pv"+strings.TrimPrefix(attempt.ID, "deployment-") {
+		return nil, ErrLogsUnavailable
+	}
+	check, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	containers, err := r.docker(check, 64<<10, "container", "ls", "-aq",
+		"--filter", "label=com.docker.compose.project="+attempt.ComposeProject)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(containers) == "" {
+		return nil, ErrLogsUnavailable
+	}
+	return func(output io.Writer) error {
+		cmd := exec.CommandContext(ctx, "docker", "compose", "-p", attempt.ComposeProject,
+			"logs", "--no-color", "--tail", "100", "--follow")
+		// The Docker CLI launches Compose as a child process. Cancel both so
+		// an idle follow cannot outlive the HTTP request.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error {
+			err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			if errors.Is(err, syscall.ESRCH) {
+				return os.ErrProcessDone
+			}
+			return err
+		}
+		cmd.Dir = r.dockerConfig
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "DOCKER_CONFIG=" + r.dockerConfig}
+		cmd.Stdout = output
+		return cmd.Run()
+	}, nil
+}
