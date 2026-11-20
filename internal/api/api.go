@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/st3fan/preview-controller/internal/deploy"
@@ -85,6 +86,10 @@ func Handler(service Service, token string) http.Handler {
 			writeError(w, http.StatusInternalServerError, "could not list environments")
 			return
 		}
+		envs = slices.Clone(envs)
+		for i := range envs {
+			envs[i].Diagnostics = nil
+		}
 		writeJSON(w, http.StatusOK, envs)
 	})
 	mux.HandleFunc("GET /api/environments/{project}/{intent}", func(w http.ResponseWriter, r *http.Request) {
@@ -97,6 +102,7 @@ func Handler(service Service, token string) http.Handler {
 			}
 			return
 		}
+		env.Diagnostics = nil
 		writeJSON(w, http.StatusOK, env)
 	})
 	mux.HandleFunc("DELETE /api/environments/{project}/{intent}", func(w http.ResponseWriter, r *http.Request) {

@@ -166,3 +166,8 @@ code {
   background: currentColor;
   mask: url("trash.svg") center / contain no-repeat;
 }
+
+.diagnostic-output {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

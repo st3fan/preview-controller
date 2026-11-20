@@ -31,6 +31,9 @@ func TestPreviewDetail(t *testing.T) {
 			CreatedAt: time.Date(2026, 11, 20, 12, 30, 0, 0, time.UTC),
 		})
 	}
+	env.Diagnostics = map[string]state.Diagnostic{
+		"attempt-11": {Stage: state.BuildStage, Summary: "Build failed.", Output: "<script>alert(1)</script>"},
+	}
 	if err := store.Save(env); err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +42,10 @@ func TestPreviewDetail(t *testing.T) {
 	path := server.URL + "/dashboard/previews/alpha/"
 	page := readPage(t, server.Client(), path+"18", http.StatusOK)
 	requireText(t, page, env.URL, "https://github.com/example/alpha/issues/18", "alpha #18",
-		env.Attempts[0].Commit, "/dashboard/logs/alpha/18/active", "2026-11-20T12:30:00Z")
+		env.Attempts[0].Commit, "/dashboard/logs/alpha/18/active", "2026-11-20T12:30:00Z", "Compose build", "Build failed.", "&lt;script&gt;alert(1)&lt;/script&gt;")
+	if strings.Contains(page, "<script>alert") {
+		t.Fatal("diagnostics rendered as markup")
+	}
 	if strings.Contains(page, env.Attempts[1].Commit) || strings.Count(page, "<article>") != 10 ||
 		strings.Index(page, env.Attempts[11].Commit) >= strings.Index(page, env.Attempts[2].Commit) {
 		t.Fatalf("unexpected recent attempt history: %s", page)

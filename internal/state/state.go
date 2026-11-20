@@ -41,20 +41,38 @@ type Attempt struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 }
 
+type FailureStage string
+
+const (
+	VerifyStage  FailureStage = "Commit verification"
+	PrepareStage FailureStage = "Prepare deployment"
+	BuildStage   FailureStage = "Compose build"
+	StartStage   FailureStage = "Compose startup"
+	HealthStage  FailureStage = "Startup health check"
+	CutoverStage FailureStage = "Preview activation"
+)
+
+type Diagnostic struct {
+	Stage   FailureStage `json:"stage"`
+	Summary string       `json:"summary"`
+	Output  string       `json:"output,omitempty"`
+}
+
 type Environment struct {
-	ArchiveAt          *time.Time `json:"archive_at,omitempty"`
-	DeleteAt           *time.Time `json:"delete_at,omitempty"`
-	LifecycleOperation string     `json:"lifecycle_operation,omitempty"`
-	LifecycleError     string     `json:"lifecycle_error,omitempty"`
-	ID                 string     `json:"id"`
-	Project            string     `json:"project"`
-	Intent             int64      `json:"intent"`
-	URL                string     `json:"url"`
-	ActiveDeploymentID string     `json:"active_deployment_id,omitempty"`
-	ActiveCommit       string     `json:"active_commit,omitempty"`
-	Deleting           bool       `json:"deleting,omitempty"`
-	Attempts           []Attempt  `json:"attempts"`
-	UpdatedAt          time.Time  `json:"updated_at"`
+	ArchiveAt          *time.Time            `json:"archive_at,omitempty"`
+	DeleteAt           *time.Time            `json:"delete_at,omitempty"`
+	LifecycleOperation string                `json:"lifecycle_operation,omitempty"`
+	LifecycleError     string                `json:"lifecycle_error,omitempty"`
+	ID                 string                `json:"id"`
+	Project            string                `json:"project"`
+	Intent             int64                 `json:"intent"`
+	URL                string                `json:"url"`
+	ActiveDeploymentID string                `json:"active_deployment_id,omitempty"`
+	ActiveCommit       string                `json:"active_commit,omitempty"`
+	Deleting           bool                  `json:"deleting,omitempty"`
+	Diagnostics        map[string]Diagnostic `json:"diagnostics,omitempty"`
+	Attempts           []Attempt             `json:"attempts"`
+	UpdatedAt          time.Time             `json:"updated_at"`
 }
 
 // ActivePreview returns the deployment currently eligible to serve preview traffic.
@@ -111,6 +129,20 @@ func (s *Store) Save(env Environment) error {
 	}
 	if env.Attempts == nil {
 		env.Attempts = []Attempt{}
+	}
+	if len(env.Diagnostics) > 0 {
+		retained := make(map[string]Diagnostic)
+		failed := 0
+		for i := len(env.Attempts) - 1; i >= 0 && failed < 10; i-- {
+			attempt := env.Attempts[i]
+			if attempt.Status == Failed {
+				failed++
+				if diagnostic, ok := env.Diagnostics[attempt.ID]; ok {
+					retained[attempt.ID] = diagnostic
+				}
+			}
+		}
+		env.Diagnostics = retained
 	}
 	dir := filepath.Join(s.root, env.Project)
 	if err := os.MkdirAll(dir, 0700); err != nil {

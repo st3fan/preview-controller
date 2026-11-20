@@ -15,7 +15,8 @@ import (
 
 type detailAttempt struct {
 	state.Attempt
-	LiveLogs bool
+	LiveLogs   bool
+	Diagnostic state.Diagnostic
 }
 
 type detailView struct {
@@ -56,7 +57,7 @@ func RegisterDetail(mux *http.ServeMux, cfg config.Config, load func(string, int
 			}
 		}
 		for _, attempt := range slices.Backward(env.Attempts) {
-			item := detailAttempt{Attempt: attempt, LiveLogs: liveLogsAvailable(env) && hasLogs(attempt)}
+			item := detailAttempt{Attempt: attempt, LiveLogs: liveLogsAvailable(env) && hasLogs(attempt), Diagnostic: env.Diagnostics[attempt.ID]}
 			if data.IssueTitle == "" {
 				data.IssueTitle = attempt.IssueTitle
 			}

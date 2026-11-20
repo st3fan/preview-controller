@@ -35,6 +35,10 @@
           {{if .LiveLogs}} · <a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}" target="_blank" rel="noopener">Live logs</a>{{end}}
         </p>
         <p>Submitted {{template "attempt-time" .CreatedAt}} · Updated {{template "attempt-time" .UpdatedAt}}</p>
+        {{if .Diagnostic.Stage}}
+        <p><strong>{{.Diagnostic.Stage}}</strong> · {{.Diagnostic.Summary}}</p>
+        {{with .Diagnostic.Output}}<pre class="diagnostic-output">{{.}}</pre>{{end}}
+        {{end}}
       </article>
       {{else}}<p>No deployment attempts.</p>{{end}}
     </section>
