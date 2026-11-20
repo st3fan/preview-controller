@@ -25,15 +25,21 @@ var templates = template.Must(template.ParseFS(files, "dashboard.html"))
 var commitSHA = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
 type environment struct {
-	Intent      int64
-	IntentURL   string
-	IssueTitle  string
-	URL         string
-	Commit      string
-	ShortCommit string
-	CommitURL   string
-	Status      state.Status
-	Logs        []state.Attempt
+	Project        string
+	Archived       bool
+	CanArchive     bool
+	CanRestore     bool
+	Deadline       *time.Time
+	LifecycleError string
+	Intent         int64
+	IntentURL      string
+	IssueTitle     string
+	URL            string
+	Commit         string
+	ShortCommit    string
+	CommitURL      string
+	Status         state.Status
+	Logs           []state.Attempt
 }
 
 type project struct {
@@ -44,6 +50,7 @@ type project struct {
 type view struct {
 	Unavailable bool
 	Projects    []project
+	Archived    []environment
 }
 
 func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]config.Project, list func() ([]state.Environment, error), changes func() <-chan struct{}) {
@@ -54,11 +61,14 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 		}
 		var data view
 		for _, env := range envs {
-			if len(data.Projects) == 0 || data.Projects[len(data.Projects)-1].Name != env.Project {
-				data.Projects = append(data.Projects, project{Name: env.Project})
-			}
 			row := environment{
-				Intent: env.Intent, URL: env.URL, Commit: env.ActiveCommit,
+				Project:        env.Project,
+				Archived:       env.DeleteAt != nil,
+				CanArchive:     !env.Deleting && env.DeleteAt == nil && env.ActiveDeploymentID != "",
+				CanRestore:     !env.Deleting && env.DeleteAt != nil,
+				Deadline:       env.ArchiveAt,
+				LifecycleError: env.LifecycleError,
+				Intent:         env.Intent, URL: env.URL, Commit: env.ActiveCommit,
 				ShortCommit: env.ActiveCommit[:min(7, len(env.ActiveCommit))],
 			}
 			if project, ok := projects[env.Project]; ok {
@@ -78,12 +88,27 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 					break
 				}
 			}
-			if !env.Deleting {
+			if !env.Deleting && !row.Archived && env.LifecycleOperation == "" {
 				for _, attempt := range env.Attempts {
 					if hasLogs(attempt) {
 						row.Logs = append(row.Logs, attempt)
 					}
 				}
+			}
+			if env.Deleting {
+				row.Status = "deleting"
+			} else if env.LifecycleOperation != "" {
+				row.Status = state.Status(env.LifecycleOperation)
+			} else if row.Archived {
+				row.Status = "archived"
+			}
+			if row.Archived {
+				row.Deadline = env.DeleteAt
+				data.Archived = append(data.Archived, row)
+				continue
+			}
+			if len(data.Projects) == 0 || data.Projects[len(data.Projects)-1].Name != env.Project {
+				data.Projects = append(data.Projects, project{Name: env.Project})
 			}
 			group := &data.Projects[len(data.Projects)-1]
 			group.Environments = append(group.Environments, row)

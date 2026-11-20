@@ -12,10 +12,19 @@ import (
 )
 
 func RegisterDelete(mux *http.ServeMux, remove func(string) error) {
+	registerAction(mux, "delete", remove, "Cleanup failed. Try deleting the preview again.")
+}
+
+func RegisterArchive(mux *http.ServeMux, archive, restore func(string) error) {
+	registerAction(mux, "archive", archive, "Archive failed. Try archiving the preview again.")
+	registerAction(mux, "restore", restore, "Restore failed. Try restoring the preview again.")
+}
+
+func registerAction(mux *http.ServeMux, action string, run func(string) error, failure string) {
 	protect := http.NewCrossOriginProtection()
-	mux.Handle("POST /dashboard/environments/{project}/{intent}/delete", protect.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("POST /dashboard/environments/{project}/{intent}/"+action, protect.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		if r.Header.Get("X-Preview-Action") != "delete" {
+		if r.Header.Get("X-Preview-Action") != action {
 			http.Error(w, "Invalid dashboard action.", http.StatusForbidden)
 			return
 		}
@@ -28,7 +37,7 @@ func RegisterDelete(mux *http.ServeMux, remove func(string) error) {
 		// Cleanup can exceed the management server's ordinary write timeout.
 		// The service bounds every runtime cleanup call separately.
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
-		switch err := remove(id); {
+		switch err := run(id); {
 		case err == nil:
 			w.WriteHeader(http.StatusNoContent)
 		case errors.Is(err, deploy.ErrConflict):
@@ -36,8 +45,8 @@ func RegisterDelete(mux *http.ServeMux, remove func(string) error) {
 		case errors.Is(err, state.ErrNotFound):
 			http.NotFound(w, r)
 		default:
-			slog.Error("dashboard deletion failed", "environment", id, "error", err)
-			http.Error(w, "Cleanup failed. Try deleting the preview again.", http.StatusInternalServerError)
+			slog.Error("dashboard action failed", "action", action, "environment", id, "error", err)
+			http.Error(w, failure, http.StatusInternalServerError)
 		}
 	})))
 }

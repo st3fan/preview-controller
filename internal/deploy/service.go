@@ -23,7 +23,7 @@ var (
 	ErrUnknownProject = errors.New("unknown project")
 	ErrInvalidIntent  = errors.New("intent must be positive")
 	ErrInvalidCommit  = errors.New("commit must be a full 40-character SHA")
-	ErrConflict       = errors.New("environment already has an in-progress deployment")
+	ErrConflict       = errors.New("environment is busy or archived")
 	ErrBusy           = errors.New("deployment intake is busy")
 	ErrClosed         = errors.New("deployment intake is closed")
 	commitPattern     = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
@@ -41,18 +41,19 @@ type Runner interface {
 }
 
 type Service struct {
-	cfg      config.Config
-	store    *state.Store
-	verifier Verifier
-	runner   Runner
-	mu       sync.Mutex
-	sem      chan struct{}
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	closed   bool
-	deleting map[string]bool
-	running  map[string]bool
+	cfg       config.Config
+	store     *state.Store
+	verifier  Verifier
+	runner    Runner
+	mu        sync.Mutex
+	sem       chan struct{}
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	closed    bool
+	deleting  map[string]bool
+	running   map[string]bool
+	lifecycle lifecycleRunner
 }
 
 func New(cfg config.Config, store *state.Store, verifier Verifier, runners ...Runner) (*Service, error) {
@@ -63,10 +64,15 @@ func New(cfg config.Config, store *state.Store, verifier Verifier, runners ...Ru
 	s := &Service{cfg: cfg, store: store, verifier: verifier, sem: make(chan struct{}, 4), ctx: ctx, cancel: cancel, deleting: map[string]bool{}, running: map[string]bool{}}
 	if len(runners) > 0 {
 		s.runner = runners[0]
+		s.lifecycle, _ = s.runner.(lifecycleRunner)
 	}
 	if err := s.reconcile(); err != nil {
 		cancel()
 		return nil, err
+	}
+	if s.lifecycle != nil {
+		s.wg.Add(1)
+		go s.runLifecycle()
 	}
 	return s, nil
 }
@@ -113,7 +119,7 @@ func (s *Service) SubmitWithIssueTitle(project string, intent int64, commit, tit
 	} else if err != nil {
 		return state.Attempt{}, state.Environment{}, err
 	}
-	if env.Deleting {
+	if env.Deleting || env.DeleteAt != nil || env.LifecycleOperation != "" {
 		return state.Attempt{}, state.Environment{}, ErrConflict
 	}
 	if len(env.Attempts) > 0 && inProgress(env.Attempts[len(env.Attempts)-1].Status) {
@@ -302,7 +308,7 @@ func (s *Service) activate(project string, intent int64, candidate state.Attempt
 	if err != nil {
 		return state.Attempt{}, err
 	}
-	if env.Deleting {
+	if env.Deleting || env.DeleteAt != nil || env.LifecycleOperation != "" {
 		return state.Attempt{}, ErrConflict
 	}
 	var previous state.Attempt
@@ -331,7 +337,7 @@ func (s *Service) activate(project string, intent int64, candidate state.Attempt
 	}
 	env.ActiveDeploymentID = candidate.ID
 	env.ActiveCommit = candidate.Commit
-	env.UpdatedAt = time.Now().UTC()
+	resetArchiveDeadline(&env, s.cfg, time.Now().UTC())
 	if err := s.store.Save(env); err != nil {
 		return state.Attempt{}, err
 	}
@@ -358,7 +364,7 @@ func (s *Service) PreviewDeployment(project string, intent int64) (state.Attempt
 	if err != nil {
 		return state.Attempt{}, "", err
 	}
-	if env.Deleting {
+	if env.Deleting || env.DeleteAt != nil || env.LifecycleOperation != "" {
 		return state.Attempt{}, "", state.ErrNotFound
 	}
 	if env.ActiveDeploymentID != "" {
@@ -376,6 +382,10 @@ func (s *Service) PreviewDeployment(project string, intent int64) (state.Attempt
 }
 
 func (s *Service) DeleteEnvironment(id string) error {
+	return s.deleteEnvironment(id, nil)
+}
+
+func (s *Service) deleteEnvironment(id string, due *time.Time) error {
 	parts := strings.Split(id, ":")
 	if len(parts) != 2 {
 		return state.ErrNotFound
@@ -390,7 +400,7 @@ func (s *Service) DeleteEnvironment(id string) error {
 	}
 	key := state.ID(project, intent)
 	s.mu.Lock()
-	if s.deleting[key] || s.running[key] {
+	if s.closed || s.deleting[key] || s.running[key] {
 		s.mu.Unlock()
 		return ErrConflict
 	}
@@ -403,6 +413,10 @@ func (s *Service) DeleteEnvironment(id string) error {
 		s.mu.Unlock()
 		return err
 	}
+	if due != nil && (env.DeleteAt == nil || env.DeleteAt.After(*due) || env.LifecycleOperation != "") {
+		s.mu.Unlock()
+		return nil
+	}
 	for _, attempt := range env.Attempts {
 		if inProgress(attempt.Status) {
 			s.mu.Unlock()
@@ -410,6 +424,7 @@ func (s *Service) DeleteEnvironment(id string) error {
 		}
 	}
 	env.Deleting = true
+	env.LifecycleOperation = ""
 	env.ActiveDeploymentID = ""
 	env.ActiveCommit = ""
 	env.UpdatedAt = time.Now().UTC()
@@ -418,8 +433,10 @@ func (s *Service) DeleteEnvironment(id string) error {
 		return err
 	}
 	s.deleting[key] = true
+	s.wg.Add(1)
 	s.mu.Unlock()
 	defer func() {
+		defer s.wg.Done()
 		s.mu.Lock()
 		delete(s.deleting, key)
 		s.mu.Unlock()
@@ -436,10 +453,13 @@ func (s *Service) DeleteEnvironment(id string) error {
 		}
 	}
 	if len(problems) > 0 {
-		return errors.Join(problems...)
+		err := errors.Join(problems...)
+		env.LifecycleError = bounded("Delete failed: " + err.Error())
+		return errors.Join(err, s.store.Save(env))
 	}
 	if err := s.store.Delete(project, intent); err != nil {
-		return err
+		env.LifecycleError = bounded("Delete failed: " + err.Error())
+		return errors.Join(err, s.store.Save(env))
 	}
 	slog.Debug("preview environment removed", "project", project, "intent", intent)
 	return nil
@@ -489,13 +509,19 @@ func (s *Service) reconcile() error {
 	slog.Debug("reconciling saved preview environments", "environments", len(envs))
 	for _, env := range envs {
 		changed := false
+		if s.lifecycle != nil && env.ArchiveAt == nil && env.DeleteAt == nil && !env.Deleting && env.ActiveDeploymentID != "" {
+			if _, ok := s.cfg.Projects[env.Project]; ok {
+				resetArchiveDeadline(&env, s.cfg, time.Now().UTC())
+				changed = true
+			}
+		}
 		activeFound := false
 		for i := range env.Attempts {
 			attempt := &env.Attempts[i]
 			if attempt.ID == env.ActiveDeploymentID && attempt.Status == state.Healthy {
 				activeFound = true
 			}
-			if attempt.Status == state.Healthy && s.runner != nil && !env.Deleting && attempt.ID == env.ActiveDeploymentID {
+			if attempt.Status == state.Healthy && s.runner != nil && !env.Deleting && env.DeleteAt == nil && env.LifecycleOperation == "" && attempt.ID == env.ActiveDeploymentID {
 				if projectCfg, ok := s.cfg.Projects[env.Project]; ok {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 					alive, err := s.runner.Check(ctx, *attempt, projectCfg)

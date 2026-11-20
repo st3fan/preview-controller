@@ -107,10 +107,28 @@ The controller writes one atomic JSON file per environment at
 `<state-root>/<project>/<intent>.json`. It records attempts and errors there.
 Docker is the source of runtime container state.
 
+## Preview retention
+
+Previews archive after seven days from their last healthy deployment or restore.
+Existing previews receive a full archive interval when the controller first
+applies this policy. The idle timer measures time since activation or restore.
+Archived stacks stop using CPU and memory and keep their containers, volumes,
+networks, images, and workspace. Restore restarts the same stack and waits for
+health before reopening its URL. Restore an archived preview before deploying a
+new commit to it.
+
+The controller permanently deletes an archived preview seven days after it was
+stopped. Set `archive_after_idle` and `delete_after_archive` in the global JSON
+settings to change the defaults. Each project can override either interval
+independently. Use positive Go duration strings such as `24h` or `168h`.
+The dashboard shows each deadline and offers Archive, Restore, and Delete.
+Delete starts permanent cleanup immediately. Cleanup removes identifiable
+preview-owned build tags and retains shared images.
+
 ## Deployment API
 
 The management API and operator dashboard are restricted to the configured home-lab listener.
-Anyone who can reach the dashboard can delete previews. Keep the management
+Anyone who can reach the dashboard can archive, restore, or delete previews. Keep the management
 listener accessible only to trusted operators.
 Open `/` on that listener to see preview links, active commits, and live deployment
 status grouped by project. Select **Live logs** next to a deployment attempt to

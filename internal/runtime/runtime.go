@@ -73,7 +73,7 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 	logger := slog.With("deployment", attempt.ID)
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	result.ComposeProject = "pv" + strings.TrimPrefix(attempt.ID, "deployment-")
+	result.ComposeProject = projectNameForAttempt(attempt)
 	result.Workspace = filepath.Join(r.root, projectName, strconv.FormatInt(intent, 10), attempt.ID)
 	checkout := filepath.Join(result.Workspace, "source")
 	if err := os.MkdirAll(result.Workspace, 0700); err != nil {
@@ -154,13 +154,9 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 	if err != nil {
 		return result, fmt.Errorf("read public port: %w", err)
 	}
-	host, port, err := net.SplitHostPort(strings.TrimSpace(portText))
-	if err != nil || host != "127.0.0.1" {
-		return result, errors.New("unexpected public port mapping")
-	}
-	result.Port, err = strconv.Atoi(port)
-	if err != nil || result.Port < 1 || result.Port > 65535 {
-		return result, errors.New("invalid assigned public port")
+	result.Port, err = publishedPort(portText)
+	if err != nil {
+		return result, err
 	}
 	if err := progress(state.Starting, result); err != nil {
 		return result, err
@@ -219,7 +215,7 @@ func (r *Runtime) Cleanup(ctx context.Context, projectName string, intent int64,
 	if !attemptID.MatchString(attempt.ID) || intent < 1 || projectName == "" || strings.ContainsAny(projectName, "/\\.") {
 		return errors.New("invalid cleanup identity")
 	}
-	name := "pv" + strings.TrimPrefix(attempt.ID, "deployment-")
+	name := projectNameForAttempt(attempt)
 	label := "label=com.docker.compose.project=" + name
 	var problems []error
 	for _, kind := range []struct {
@@ -242,6 +238,11 @@ func (r *Runtime) Cleanup(ctx context.Context, projectName string, intent int64,
 			}
 		}
 	}
+	if len(problems) == 0 {
+		if err := r.removeBuildImages(ctx, name); err != nil {
+			problems = append(problems, err)
+		}
+	}
 	workspace := filepath.Join(r.root, projectName, strconv.FormatInt(intent, 10), attempt.ID)
 	if err := os.RemoveAll(workspace); err != nil {
 		problems = append(problems, err)
@@ -253,7 +254,7 @@ func (r *Runtime) Check(ctx context.Context, attempt state.Attempt, cfg config.P
 	if !attemptID.MatchString(attempt.ID) || attempt.Port < 1 {
 		return false, nil
 	}
-	name := "pv" + strings.TrimPrefix(attempt.ID, "deployment-")
+	name := projectNameForAttempt(attempt)
 	output, err := r.docker(ctx, 64<<10, "container", "ls", "-q", "--filter", "label=com.docker.compose.project="+name, "--filter", "status=running")
 	if err != nil {
 		return false, err
@@ -413,4 +414,34 @@ func resolvedInsideCheckout(checkout, source string) error {
 		return errors.New("path escapes checkout")
 	}
 	return nil
+}
+
+func publishedPort(output string) (int, error) {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(output))
+	if err != nil || host != "127.0.0.1" {
+		return 0, errors.New("unexpected public port mapping")
+	}
+	number, err := strconv.Atoi(port)
+	if err != nil || number < 1 || number > 65535 {
+		return 0, errors.New("invalid assigned public port")
+	}
+	return number, nil
+}
+
+// Only remove Compose-generated tags for images labeled as builds of this project.
+func (r *Runtime) removeBuildImages(ctx context.Context, project string) error {
+	output, err := r.docker(ctx, 64<<10, "image", "ls", "--filter", "label=com.docker.compose.project="+project,
+		"--filter", "reference="+project+"-*:latest", "--format", "{{.Repository}}:{{.Tag}}")
+	if err != nil {
+		return err
+	}
+	var problems []error
+	for _, image := range strings.Fields(output) {
+		users, err := r.docker(ctx, 1024, "container", "ls", "-aq", "--filter", "ancestor="+image)
+		if err == nil && strings.TrimSpace(users) == "" {
+			_, err = r.docker(ctx, 64<<10, "image", "rm", "--no-prune", image)
+		}
+		problems = append(problems, err)
+	}
+	return errors.Join(problems...)
 }

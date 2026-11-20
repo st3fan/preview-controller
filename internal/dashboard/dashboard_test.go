@@ -116,6 +116,24 @@ func TestDashboard(t *testing.T) {
 	}
 }
 
+func TestArchivedDashboardRow(t *testing.T) {
+	mux := http.NewServeMux()
+	deadline := time.Date(2026, time.November, 27, 19, 0, 0, 0, time.UTC)
+	Register(mux, context.Background(), nil, func() ([]state.Environment, error) {
+		return []state.Environment{{
+			Project: "demo", Intent: 45, DeleteAt: &deadline,
+			URL: "https://demo-45.preview.example.com",
+		}}, nil
+	}, nil)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	body := response.Body.String()
+	requireText(t, body, "<h2>Archived</h2>", "/demo/45/restore", "/demo/45/delete", "Nov 27, 2026 19:00 UTC")
+	if strings.Contains(body, "Open preview") || strings.Contains(body, "/demo/45/archive") {
+		t.Fatalf("archived row exposes active actions: %s", body)
+	}
+}
+
 func TestUnavailableDashboard(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, t.Context(), nil, func() ([]state.Environment, error) {

@@ -42,15 +42,19 @@ type Attempt struct {
 }
 
 type Environment struct {
-	ID                 string    `json:"id"`
-	Project            string    `json:"project"`
-	Intent             int64     `json:"intent"`
-	URL                string    `json:"url"`
-	ActiveDeploymentID string    `json:"active_deployment_id,omitempty"`
-	ActiveCommit       string    `json:"active_commit,omitempty"`
-	Deleting           bool      `json:"deleting,omitempty"`
-	Attempts           []Attempt `json:"attempts"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ArchiveAt          *time.Time `json:"archive_at,omitempty"`
+	DeleteAt           *time.Time `json:"delete_at,omitempty"`
+	LifecycleOperation string     `json:"lifecycle_operation,omitempty"`
+	LifecycleError     string     `json:"lifecycle_error,omitempty"`
+	ID                 string     `json:"id"`
+	Project            string     `json:"project"`
+	Intent             int64      `json:"intent"`
+	URL                string     `json:"url"`
+	ActiveDeploymentID string     `json:"active_deployment_id,omitempty"`
+	ActiveCommit       string     `json:"active_commit,omitempty"`
+	Deleting           bool       `json:"deleting,omitempty"`
+	Attempts           []Attempt  `json:"attempts"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 func ID(project string, intent int64) string {

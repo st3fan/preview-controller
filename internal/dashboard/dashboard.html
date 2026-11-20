@@ -35,34 +35,46 @@
 <p role="status">Could not load preview environments.</p>
 {{else}}
 {{range .Projects}}
-{{$project := .Name}}
 <section>
   <h2>{{.Name}}</h2>
+  {{template "preview-table" .Environments}}
+</section>
+{{end}}
+{{with .Archived}}
+<section>
+  <h2>Archived</h2>
+  {{template "preview-table" .}}
+</section>
+{{end}}
+{{if not (or .Projects .Archived)}}
+<p>No preview environments yet.</p>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "preview-table"}}
   <div class="table-scroll">
-    <table aria-label="{{.Name}} previews">
+    <table aria-label="preview environments">
       <thead>
-        <tr><th scope="col">Intent</th><th scope="col">Preview</th><th scope="col">Active commit</th><th scope="col">Latest deployment</th><th scope="col">Deployment logs</th><th scope="col">Actions</th></tr>
+        <tr><th scope="col">Intent</th><th scope="col">Preview</th><th scope="col">Active commit</th><th scope="col">Latest deployment</th><th scope="col">Deployment logs</th><th scope="col">Schedule</th><th scope="col">Actions</th></tr>
       </thead>
       <tbody>
-      {{range .Environments}}
+      {{range .}}
         {{$intent := .Intent}}
+        {{$project := .Project}}
         <tr>
           <th scope="row">{{if .IntentURL}}<a href="{{.IntentURL}}" target="_blank" rel="noopener">{{template "intent-label" .}}</a>{{else}}{{template "intent-label" .}}{{end}}</th>
-          <td><a href="{{.URL}}">Open preview</a></td>
+          <td>{{if .Archived}}{{$project}}{{else if or (eq .Status "archiving") (eq .Status "deleting")}}Offline{{else}}<a href="{{.URL}}">Open preview</a>{{end}}</td>
           <td>{{if .CommitURL}}<a href="{{.CommitURL}}" target="_blank" rel="noopener"><code title="{{.Commit}}">{{.ShortCommit}}</code></a>{{else if .Commit}}<code title="{{.Commit}}">{{.ShortCommit}}</code>{{else}}None{{end}}</td>
-          <td>{{if .Status}}<span class="status {{.Status}}">{{.Status}}</span>{{else}}No attempts{{end}}</td>
+          <td>{{if .Status}}<span class="status {{.Status}}">{{.Status}}</span>{{else}}No attempts{{end}}{{with .LifecycleError}}<div>{{.}}</div>{{end}}</td>
           <td>{{range .Logs}}<div><a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}" target="_blank" rel="noopener">Live logs</a> <code>{{.ID}}</code> <span class="status {{.Status}}">{{.Status}}</span></div>{{else}}Unavailable{{end}}</td>
-          <td><button type="button" class="delete-preview" data-delete-url="/dashboard/environments/{{$project}}/{{$intent}}/delete" data-preview="{{$project}} #{{$intent}}" aria-label="Delete {{$project}} #{{$intent}}"><span aria-hidden="true"></span></button></td>
+          <td>{{if .Deadline}}{{if .Archived}}Delete{{else}}Archive{{end}} <time datetime="{{.Deadline.Format "2006-01-02T15:04:05Z07:00"}}">{{.Deadline.Format "Jan 2, 2006 15:04 UTC"}}</time>{{end}}</td>
+          <td>{{if .CanArchive}}<button type="button" data-action="archive" data-action-url="/dashboard/environments/{{$project}}/{{$intent}}/archive" data-preview="{{$project}} #{{$intent}}">Archive</button>{{end}}{{if .CanRestore}}<button type="button" data-action="restore" data-action-url="/dashboard/environments/{{$project}}/{{$intent}}/restore" data-preview="{{$project}} #{{$intent}}">Restore</button>{{end}} <button type="button" class="delete-preview" data-delete-url="/dashboard/environments/{{$project}}/{{$intent}}/delete" data-preview="{{$project}} #{{$intent}}" aria-label="Delete {{$project}} #{{$intent}}"><span aria-hidden="true"></span></button></td>
         </tr>
       {{end}}
       </tbody>
     </table>
   </div>
-</section>
-{{else}}
-<p>No preview environments yet.</p>
-{{end}}
-{{end}}
 {{end}}
 
 {{define "intent-label"}}#{{.Intent}}{{with .IssueTitle}} {{.}}{{end}}{{end}}
