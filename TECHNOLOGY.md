@@ -11,7 +11,7 @@
 ## Packaging and distribution
 
 - Build a native Linux executable with `CGO_ENABLED=0`. Install from a repository source build, either as a native executable or as a controller image with the Docker CLI and Compose plugin.
-- Release artifacts and an automated distribution channel are undecided.
+- Publish public Linux amd64 and arm64 controller images to GHCR with GitHub Actions after a GitHub Release is published. Portainer can pull the multi-platform image by version tag or index digest.
 
 ## Hosting and deployment
 
@@ -30,4 +30,4 @@
 
 - Per-Intent Compose stacks favor isolation and predictable behavior over lower memory use. Per-environment JSON files fit the small single-host first version and the CGO-free binary requirement.
 - The controller's Go proxy keeps Caddy configuration static while providing stable Intent URLs. Public repositories avoid Git credential handling in the first version.
-- The first version does not need a registry, GitHub Actions preview-build pipeline, or Kubernetes. Private repository support and release packaging remain future choices.
+- GHCR distributes the controller image. Preview builds run on the preview host. Private repositories and additional release artifacts remain future choices.

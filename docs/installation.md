@@ -100,6 +100,51 @@ state volume. Remove active previews through the management API before uninstall
 Stopping the controller leaves preview projects running, and removing the named
 state volume discards the controller's deployment records.
 
+## Portainer with a published image
+
+Use a Portainer Docker Standalone environment on a dedicated Linux host
+running amd64 or arm64. Prepare `/etc/preview-server.json` using
+`config/preview-server.example.json` from the GitHub Release's source tree.
+Configure the public repository allowlist and the preview domain. Use the
+[state, workspace and token settings above](#docker-compose), including
+creating the workspace directory on the host.
+
+1. Create a stack in Portainer and paste the contents of
+   `compose.portainer.yaml` from the same release into the web editor.
+2. Set the stack environment variables `PREVIEW_SERVER_IMAGE` and
+   `PREVIEW_SERVER_TOKEN`. Use the exact `ghcr.io/st3fan/preview-controller@sha256:…`
+   reference from the **Publish release image** workflow summary to pin the
+   multi-platform index digest. You can also use the release version tag,
+   such as `ghcr.io/st3fan/preview-controller:v1.2.3`. For SemVer build
+   metadata, the image tag uses `_` in place of `+`.
+3. Deploy the stack. Check the controller logs in Portainer and run
+   `curl -i http://127.0.0.1:8080/healthz` on the host. The example
+   configuration returns HTTP 204.
+4. To update, edit `PREVIEW_SERVER_IMAGE` to the new release digest and
+   redeploy the same stack. Keep its name and named state volume so
+   deployment records survive controller replacement.
+
+The stack uses host networking, the host Docker socket, a read-only settings
+file and a named state volume. The workspace bind uses the same absolute path
+inside and outside the controller so the host daemon can resolve mounts for
+preview services. Use the optional `PREVIEW_SERVER_CONFIG` and
+`PREVIEW_SERVER_WORKSPACE` stack variables to customize host paths.
+
+### Publishing and verifying a release image
+
+Publish a GitHub Release with a tag such as `v1.2.3` to start the workflow.
+The workflow runs CI before publishing the version tag. The highest stable
+published SemVer release also updates `latest` to the same index. GitHub
+prereleases and SemVer prereleases only get the version tag.
+
+On first publication, open the GHCR package settings and set visibility to
+**Public**. GitHub defaults new packages to private even for a public source
+repository. If the verification jobs fail before the visibility change, rerun
+the failed jobs. Verification pulls both the version tag and index digest
+without registry credentials on amd64 and arm64, starts the Portainer stack,
+and checks the health endpoint and Docker Compose access. The workflow summary
+records the digest for pinning.
+
 ## Caddy and preview ingress
 
 The operator configures Caddy once. With a previously provisioned wildcard
