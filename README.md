@@ -21,7 +21,7 @@ Copy [the example settings](config/preview-server.example.json) to
 `/etc/preview-server.json` and adjust the project allowlist, state root,
 workspace root, and management listener for the host. Put the bearer secret in
 the environment variable named by `deployment_token_env`; the settings file
-contains no secret or deployment state. The management listener accepts only a loopback or private
+contains no deployment state. The management listener accepts only a loopback or private
 IP address. The service account needs write access to the state and workspace
 roots and access to the local Docker daemon. Run it only on a dedicated preview
 host; Docker builds and containers can execute untrusted project code there.
@@ -83,18 +83,20 @@ set `public_port` to match their existing listener. Configurable apps can use
 `${PREVIEW_PORT:-8080}` in their Compose command or environment. The controller
 sets `PREVIEW_PORT` for Compose interpolation and assigns the host port itself.
 
-Use `compose_env` in a project's settings for literal values and
+Use `compose_env` in a project's settings for literal values, including
+preview-only secrets. Keep settings files with literal secrets private and out
+of version control. Use
 `compose_env_from` to map Compose variables to controller service environment
-variables. For example, these project settings supply a browser origin and a
-preview-only database password:
+variables. For example, these project settings supply a literal database
+password and reference a token from the service environment:
 
 ```json
 {
   "compose_env": {
-    "APP_BROWSER_ORIGIN": "https://preview.example.com"
+    "POSTGRES_PASSWORD": "replace-with-a-preview-only-password"
   },
   "compose_env_from": {
-    "POSTGRES_PASSWORD": "PREVIEW_POSTGRES_PASSWORD"
+    "APP_API_TOKEN": "PREVIEW_APP_API_TOKEN"
   }
 }
 ```

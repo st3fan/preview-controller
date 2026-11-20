@@ -129,7 +129,7 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 	}
 	args := []string{"compose", "--project-directory", filepath.Dir(sourceCompose), "--env-file", envFile, "-p", result.ComposeProject, "-f", compose}
 	runCompose := func(limit int, command ...string) (string, error) {
-		return r.runDocker(ctx, limit, len(cfg.ComposeEnvFrom) > 0, append(args, command...)...)
+		return r.runDocker(ctx, limit, len(cfg.ComposeEnv) > 0 || len(cfg.ComposeEnvFrom) > 0, append(args, command...)...)
 	}
 	logger.Debug("rendering candidate Compose configuration")
 	output, err := runCompose(2<<20, "config", "--format", "json")
@@ -156,7 +156,7 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 	}
 	host, port, err := net.SplitHostPort(strings.TrimSpace(portText))
 	if err != nil || host != "127.0.0.1" {
-		return result, fmt.Errorf("unexpected public port mapping %q", strings.TrimSpace(portText))
+		return result, errors.New("unexpected public port mapping")
 	}
 	result.Port, err = strconv.Atoi(port)
 	if err != nil || result.Port < 1 || result.Port > 65535 {
