@@ -49,7 +49,7 @@
           <td><a href="{{.URL}}">Open preview</a></td>
           <td>{{if .CommitURL}}<a href="{{.CommitURL}}" target="_blank" rel="noopener"><code title="{{.Commit}}">{{.ShortCommit}}</code></a>{{else if .Commit}}<code title="{{.Commit}}">{{.ShortCommit}}</code>{{else}}None{{end}}</td>
           <td>{{if .Status}}<span class="status {{.Status}}">{{.Status}}</span>{{else}}No attempts{{end}}</td>
-          <td>{{range .Logs}}<div><a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}">Live logs</a> <code>{{.ID}}</code> <span class="status {{.Status}}">{{.Status}}</span></div>{{else}}Unavailable{{end}}</td>
+          <td>{{range .Logs}}<div><a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}" target="_blank" rel="noopener">Live logs</a> <code>{{.ID}}</code> <span class="status {{.Status}}">{{.Status}}</span></div>{{else}}Unavailable{{end}}</td>
         </tr>
       {{end}}
       </tbody>
