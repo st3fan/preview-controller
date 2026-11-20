@@ -57,8 +57,9 @@ func ID(project string, intent int64) string {
 }
 
 type Store struct {
-	root string
-	mu   sync.Mutex
+	root    string
+	mu      sync.Mutex
+	changed chan struct{}
 }
 
 func New(root string) (*Store, error) {
@@ -72,7 +73,7 @@ func New(root string) (*Store, error) {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return nil, errors.New("state root must be a real directory")
 	}
-	return &Store{root: root}, nil
+	return &Store{root: root, changed: make(chan struct{})}, nil
 }
 
 func (s *Store) Load(project string, intent int64) (Environment, error) {
@@ -133,6 +134,7 @@ func (s *Store) Save(env Environment) error {
 	if err := os.Rename(temp, name); err != nil {
 		return err
 	}
+	s.notifyChange()
 	d, err := os.Open(dir)
 	if err != nil {
 		return err
@@ -172,12 +174,26 @@ func (s *Store) Delete(project string, intent int64) error {
 	if err := os.Remove(name); err != nil {
 		return err
 	}
+	s.notifyChange()
 	d, err := os.Open(dir)
 	if err != nil {
 		return err
 	}
 	defer d.Close()
 	return d.Sync()
+}
+
+// Changes closes when the store next changes. Call it before reading a snapshot
+// so a write concurrent with the read cannot be missed.
+func (s *Store) Changes() <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.changed
+}
+
+func (s *Store) notifyChange() {
+	close(s.changed)
+	s.changed = make(chan struct{})
 }
 
 func (s *Store) List() ([]Environment, error) {

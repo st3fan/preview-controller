@@ -14,6 +14,7 @@ import (
 
 	"github.com/st3fan/preview-controller/internal/api"
 	"github.com/st3fan/preview-controller/internal/config"
+	"github.com/st3fan/preview-controller/internal/dashboard"
 	"github.com/st3fan/preview-controller/internal/deploy"
 	"github.com/st3fan/preview-controller/internal/gitverify"
 	"github.com/st3fan/preview-controller/internal/ingress"
@@ -52,9 +53,14 @@ func run(settings string) error {
 		return err
 	}
 	defer service.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	managementMux := http.NewServeMux()
+	dashboard.Register(managementMux, ctx, service.ListEnvironments, store.Changes)
+	managementMux.Handle("/", api.Handler(service, cfg.Token()))
 	management := &http.Server{
 		Addr:              cfg.ManagementListen,
-		Handler:           api.Handler(service, cfg.Token()),
+		Handler:           managementMux,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -78,8 +84,6 @@ func run(settings string) error {
 		return err
 	}
 	defer previewListener.Close()
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	errorsFromServers := make(chan error, 2)
 	go func() { errorsFromServers <- management.Serve(managementListener) }()
 	go func() { errorsFromServers <- preview.Serve(previewListener) }()
@@ -90,6 +94,7 @@ func run(settings string) error {
 	case <-ctx.Done():
 	case serveErr = <-errorsFromServers:
 	}
+	stop()
 	slog.Debug("shutting down preview server")
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -1,0 +1,56 @@
+:root {
+  color-scheme: light dark;
+  font: 100%/1.5 system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  margin: 0 auto;
+  max-width: 72rem;
+  padding: clamp(1rem, 5vw, 4rem);
+}
+
+h1 {
+  margin: 0 0 2rem;
+  letter-spacing: -.035em;
+}
+
+h2 {
+  font-size: 1.125rem;
+  margin: 2rem 0 .75rem;
+  overflow-wrap: anywhere;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+th, td {
+  padding: .75rem;
+  border-block-end: 1px solid color-mix(in srgb, CanvasText 20%, Canvas);
+}
+
+thead {
+  background: color-mix(in srgb, CanvasText 6%, Canvas);
+}
+
+code {
+  overflow-wrap: anywhere;
+}
+
+.status {
+  text-transform: capitalize;
+}
+
+.status.failed {
+  font-weight: 700;
+}
