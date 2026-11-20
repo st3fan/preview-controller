@@ -78,7 +78,10 @@ func TestDashboard(t *testing.T) {
 	// A probe result updates the stream without any deployment state write.
 	go monitor.Run(shutdown)
 	event = readEvent(t, events)
-	requireText(t, event, ">Healthy<", "Last success", ">Failed<")
+	requireText(t, event, ">Healthy<", ">Failed<")
+	if strings.Contains(event, "Last success") {
+		t.Fatal("dashboard shows the last successful health check timestamp")
+	}
 
 	env.Intent = 19
 	env.Attempts = nil

@@ -59,7 +59,6 @@
     <dl><dt>{{if .Archived}}Status{{else}}Active health{{end}}</dt><dd>
       {{if .Archived}}{{template "badge" "Offline"}}{{else}}{{template "badge" .Health.Status}}{{end}}
       {{with .Operation}}<small>{{.}}</small>{{end}}
-      {{if not .Health.LastSuccess.IsZero}}<small>Last success {{template "attempt-time" .Health.LastSuccess}}</small>{{end}}
       {{with .Health.Failure}}<small>Latest failure: {{.}}</small>{{end}}
     </dd></dl>
     <dl><dt>Latest deployment</dt><dd>{{with .Latest}}{{template "badge" (outcome .Status)}}
