@@ -2,15 +2,19 @@ package dashboard
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/st3fan/preview-controller/internal/config"
+	"github.com/st3fan/preview-controller/internal/githubmeta"
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
@@ -29,10 +33,13 @@ func (a detailAttempt) TimeToPreview() string {
 
 type detailView struct {
 	state.Environment
-	IssueURL   string
-	IssueTitle string
-	Active     *detailAttempt
-	Recent     []detailAttempt
+	IssueURL      string
+	IssueTitle    string
+	RepositoryURL string
+	GitHubEnabled bool
+	GitHub        githubmeta.Result
+	Active        *detailAttempt
+	Recent        []detailAttempt
 }
 
 func liveLogsAvailable(env state.Environment) bool {
@@ -40,6 +47,14 @@ func liveLogsAvailable(env state.Environment) bool {
 }
 
 func RegisterDetail(mux *http.ServeMux, cfg config.Config, load func(string, int64) (state.Environment, error)) {
+	var lookup func(context.Context, string, int64) githubmeta.Result
+	if token := os.Getenv(cfg.GitHubTokenEnv); strings.TrimSpace(token) != "" {
+		lookup = githubmeta.New(token).Lookup
+	}
+	registerDetail(mux, cfg, load, lookup)
+}
+
+func registerDetail(mux *http.ServeMux, cfg config.Config, load func(string, int64) (state.Environment, error), lookup func(context.Context, string, int64) githubmeta.Result) {
 	mux.HandleFunc("GET /dashboard/previews/{project}/{intent}", func(w http.ResponseWriter, r *http.Request) {
 		project := r.PathValue("project")
 		intent, err := strconv.ParseInt(r.PathValue("intent"), 10, 64)
@@ -58,8 +73,11 @@ func RegisterDetail(mux *http.ServeMux, cfg config.Config, load func(string, int
 		}
 		data := detailView{Environment: env}
 		if projectConfig, ok := cfg.Projects[project]; ok {
-			repository := strings.TrimSuffix(strings.TrimRight(projectConfig.Repository, "/"), ".git")
-			data.IssueURL = fmt.Sprintf("%s/issues/%d", repository, intent)
+			if repository, err := url.Parse(projectConfig.Repository); err == nil {
+				name := strings.TrimSuffix(strings.Trim(repository.Path, "/"), ".git")
+				data.RepositoryURL = "https://github.com/" + name
+				data.IssueURL = fmt.Sprintf("%s/issues/%d", data.RepositoryURL, intent)
+			}
 			if url, err := cfg.URL(project, intent); err == nil {
 				data.URL = url
 			}
@@ -74,6 +92,16 @@ func RegisterDetail(mux *http.ServeMux, cfg config.Config, load func(string, int
 			}
 			if len(data.Recent) < 10 {
 				data.Recent = append(data.Recent, item)
+			}
+		}
+		if data.RepositoryURL != "" && cfg.GitHubTokenEnv != "" {
+			data.GitHubEnabled = true
+			if lookup != nil {
+				repositoryName := strings.TrimPrefix(data.RepositoryURL, "https://github.com/")
+				data.GitHub = lookup(r.Context(), repositoryName, intent)
+				if issue := data.GitHub.Intent; issue != nil && issue.Title != "" {
+					data.IssueTitle = issue.Title
+				}
 			}
 		}
 		var page bytes.Buffer

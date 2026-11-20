@@ -35,6 +35,7 @@ type Config struct {
 	StateRoot          string             `json:"state_root"`
 	WorkspaceRoot      string             `json:"workspace_root"`
 	DeploymentTokenEnv string             `json:"deployment_token_env"`
+	GitHubTokenEnv     string             `json:"github_token_env,omitempty"`
 	Projects           map[string]Project `json:"projects"`
 	token              string
 }
@@ -123,12 +124,20 @@ func (c Config) Validate() error {
 	if !envName.MatchString(c.DeploymentTokenEnv) {
 		return errors.New("deployment_token_env must name an environment variable")
 	}
+	if c.GitHubTokenEnv != "" && !envName.MatchString(c.GitHubTokenEnv) {
+		return errors.New("github_token_env must name an environment variable")
+	}
 	if len(c.Projects) == 0 {
 		return errors.New("at least one project is required")
 	}
 	for name, project := range c.Projects {
 		if !projectName.MatchString(name) || len(name) > 40 {
 			return fmt.Errorf("invalid project slug %q", name)
+		}
+		for _, source := range project.ComposeEnvFrom {
+			if c.GitHubTokenEnv != "" && source == c.GitHubTokenEnv {
+				return fmt.Errorf("project %q: github_token_env cannot be passed to Compose", name)
+			}
 		}
 		if err := project.Validate(); err != nil {
 			return fmt.Errorf("project %q: %w", name, err)

@@ -17,6 +17,34 @@
     </header>
     <p>{{if .URL}}<a href="{{.URL}}">Open preview</a>{{end}}{{if .IssueURL}}{{if .URL}} · {{end}}<a href="{{.IssueURL}}" target="_blank" rel="noopener">GitHub issue</a>{{end}}
     {{if .Deleting}} · Deleting{{else if .LifecycleOperation}} · {{.LifecycleOperation}}{{else if .DeleteAt}} · Archived{{end}}</p>
+    {{if .GitHubEnabled}}
+    <section aria-labelledby="github-work">
+      <h2 id="github-work">GitHub work</h2>
+      {{with .GitHub.Intent}}
+      <p>Intent <a href="{{$.IssueURL}}">#{{.Number}}</a> · {{.State}}</p>
+      <h3>Related issues</h3>
+      {{if $.GitHub.Related}}
+      <ul>
+        {{range $.GitHub.Related}}
+        <li><a href="{{$.RepositoryURL}}/issues/{{.Number}}">#{{.Number}} {{.Title}}</a> · {{.State}}</li>
+        {{end}}
+      </ul>
+      {{else if $.GitHub.Partial}}<p>Related issues unavailable.</p>
+      {{else}}<p>No linked sub-issues.</p>{{end}}
+      <h3>Pull requests</h3>
+      {{if $.GitHub.Pulls}}
+      {{if $.GitHub.Ordered}}<ol>{{else}}<p>Stack order unavailable.</p><ul>{{end}}
+        {{range $.GitHub.Pulls}}
+        <li><a href="{{$.RepositoryURL}}/pull/{{.Number}}">#{{.Number}} {{.Title}}</a> · {{.State}}</li>
+        {{end}}
+      {{if $.GitHub.Ordered}}</ol>{{else}}</ul>{{end}}
+      {{else if $.GitHub.Partial}}<p>Linked pull requests unavailable.</p>
+      {{else}}<p>No linked pull requests.</p>{{end}}
+      {{if $.GitHub.Partial}}<p>GitHub returned incomplete results.</p>{{end}}
+      {{else}}<p>GitHub metadata unavailable.</p>{{end}}
+      <p><a href="#activity">Deployment activity</a></p>
+    </section>
+    {{end}}
     {{$project := .Project}}{{$intent := .Intent}}
     <section>
       <h2>Active deployment</h2>
@@ -28,7 +56,7 @@
       {{else}}<p>No active deployment.</p>{{end}}
     </section>
     <section>
-      <h2>Recent attempts</h2>
+      <h2 id="activity">Recent attempts</h2>
       {{range .Recent}}
       <article>
         <p>{{template "attempt-summary" .}}

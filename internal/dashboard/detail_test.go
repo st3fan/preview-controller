@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/st3fan/preview-controller/internal/config"
+	"github.com/st3fan/preview-controller/internal/githubmeta"
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
@@ -62,4 +64,44 @@ func TestPreviewDetail(t *testing.T) {
 	for _, missing := range []string{"0", "unknown", "19"} {
 		readPage(t, server.Client(), path+missing, http.StatusNotFound)
 	}
+}
+
+func TestDetailGitHubMetadata(t *testing.T) {
+	cfg := config.Config{
+		GitHubTokenEnv: "PREVIEW_GITHUB_TOKEN",
+		Projects:       map[string]config.Project{"alpha": {Repository: "https://github.com/example/alpha.git/"}},
+	}
+	env := state.Environment{Project: "alpha", Intent: 51, Attempts: []state.Attempt{{IssueTitle: "Deployment title"}}}
+	load := func(string, int64) (state.Environment, error) { return env, nil }
+	mux := http.NewServeMux()
+	registerDetail(mux, cfg, load, func(_ context.Context, repository string, intent int64) githubmeta.Result {
+		if repository != "example/alpha" || intent != 51 {
+			t.Fatalf("unexpected lookup %s #%d", repository, intent)
+		}
+		return githubmeta.Result{
+			Intent:  &githubmeta.Issue{Number: 51, Title: "<script>live title</script>", State: "OPEN"},
+			Related: []githubmeta.Issue{{Number: 52, Title: "Related work", State: "CLOSED"}},
+			Pulls:   []githubmeta.Pull{{Number: 57, Title: "<b>Pull request</b>", State: "MERGED"}},
+			Partial: true,
+		}
+	})
+	request := httptest.NewRequest(http.MethodGet, "/dashboard/previews/alpha/51", nil)
+	resp := httptest.NewRecorder()
+	mux.ServeHTTP(resp, request)
+	page := resp.Body.String()
+	if resp.Code != http.StatusOK || strings.Contains(page, "Deployment title") || strings.Contains(page, "<script>live title</script>") {
+		t.Fatalf("unexpected GitHub detail page: %s", page)
+	}
+	requireText(t, page, "&lt;script&gt;live title&lt;/script&gt;", "https://github.com/example/alpha/issues/52",
+		"https://github.com/example/alpha/pull/57", "&lt;b&gt;Pull request&lt;/b&gt;", "MERGED", "CLOSED",
+		"Stack order unavailable.", "GitHub returned incomplete results.", "#activity")
+
+	mux = http.NewServeMux()
+	registerDetail(mux, cfg, load, func(context.Context, string, int64) githubmeta.Result { return githubmeta.Result{} })
+	resp = httptest.NewRecorder()
+	mux.ServeHTTP(resp, request)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("fallback returned HTTP %d", resp.Code)
+	}
+	requireText(t, resp.Body.String(), "Deployment title", "GitHub metadata unavailable.")
 }

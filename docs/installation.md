@@ -192,3 +192,26 @@ unsupported field can produce the same error.
    from the build checkout and correct the field while preserving your local values.
 4. Run `sudo systemctl restart preview-server` and check
    `systemctl status preview-server` for successful startup.
+
+## GitHub metadata
+
+To show live GitHub information on a preview detail page, set
+`"github_token_env": "PREVIEW_GITHUB_TOKEN"` in the controller's JSON settings
+and pass `PREVIEW_GITHUB_TOKEN` in the controller process environment. For systemd
+use the service's environment file. The supplied Compose files pass
+`PREVIEW_GITHUB_TOKEN` through from the Compose environment, including a local
+`.env` file or a Portainer stack variable. Use a fine-grained token restricted to the configured
+repositories with read access to Issues and Pull requests.
+
+The detail page uses the existing deployment Intent number to find the issue in
+the project's configured repository. Related tickets are direct, same-repository
+GitHub sub-issues. PRs targeting that repository appear when GitHub records a
+closing reference to the Intent or one of those sub-issues. For a single chain,
+the list runs from the lowest PR to the tip by matching each PR's base repository
+and branch to another PR's head. When the relationships are ambiguous or the
+results are incomplete, the page lists available PRs by number and labels the
+stack order unavailable.
+
+Each lookup reads up to 20 sub-issues and 20 closing PR references per issue.
+The page flags incomplete results. The deployment-supplied title remains
+available when the live title cannot be fetched.

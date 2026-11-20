@@ -1,0 +1,229 @@
+// Package githubmeta reads display metadata for preview intents.
+package githubmeta
+
+import (
+	"bytes"
+	"cmp"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"slices"
+	"strings"
+	"time"
+)
+
+const query = `query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    issue(number: $number) {
+      ...IssueFields
+      subIssues(first: 20) {
+        pageInfo { hasNextPage }
+        nodes { ...IssueFields }
+      }
+    }
+  }
+}
+fragment IssueFields on Issue {
+  number title state repository { nameWithOwner }
+  closedByPullRequestsReferences(first: 20, includeClosedPrs: true) {
+    pageInfo { hasNextPage }
+    nodes {
+      number title state
+      baseRefName headRefName
+      baseRepository { nameWithOwner }
+      headRepository { nameWithOwner }
+    }
+  }
+}`
+
+type Client struct {
+	token    string
+	endpoint string
+	http     *http.Client
+}
+
+func New(token string) *Client {
+	return &Client{token: token, endpoint: "https://api.github.com/graphql", http: &http.Client{
+		Timeout:       2 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
+}
+
+type Result struct {
+	Intent  *Issue
+	Related []Issue
+	Pulls   []Pull
+	Ordered bool
+	Partial bool
+}
+
+type repository struct {
+	NameWithOwner string
+}
+
+type connection[T any] struct {
+	PageInfo struct{ HasNextPage bool }
+	Nodes    []*T
+}
+
+type Issue struct {
+	Number                         int64
+	Title                          string
+	State                          string
+	Repository                     repository
+	ClosedByPullRequestsReferences *connection[Pull]
+}
+
+type Pull struct {
+	Number         int64
+	Title          string
+	State          string
+	BaseRefName    string
+	HeadRefName    string
+	BaseRepository repository
+	HeadRepository repository
+}
+
+func (c *Client) Lookup(ctx context.Context, repositoryName string, number int64) Result {
+	owner, repo, ok := strings.Cut(repositoryName, "/")
+	if !ok || owner == "" || repo == "" || number < 1 || number > 1<<31-1 {
+		return Result{}
+	}
+	payload, err := json.Marshal(struct {
+		Query     string         `json:"query"`
+		Variables map[string]any `json:"variables"`
+	}{query, map[string]any{"owner": owner, "repo": repo, "number": number}})
+	if err != nil {
+		return Result{}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(payload))
+	if err != nil {
+		return Result{}
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	res, err := c.http.Do(req)
+	if err != nil {
+		return Result{}
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return Result{}
+	}
+
+	var response struct {
+		Data struct {
+			Repository struct {
+				Issue *struct {
+					Issue
+					SubIssues *connection[Issue]
+				}
+			}
+		}
+		Errors []json.RawMessage
+	}
+	if err := json.NewDecoder(io.LimitReader(res.Body, 2<<20)).Decode(&response); err != nil {
+		return Result{}
+	}
+	root := response.Data.Repository.Issue
+	if root == nil || root.Number != number || !strings.EqualFold(root.Repository.NameWithOwner, repositoryName) {
+		return Result{}
+	}
+	result := Result{Intent: &root.Issue, Partial: len(response.Errors) > 0}
+	seen := make(map[int64]bool)
+	addPulls := func(refs *connection[Pull]) {
+		if refs == nil {
+			result.Partial = true
+			return
+		}
+		result.Partial = result.Partial || refs.PageInfo.HasNextPage
+		for _, pr := range refs.Nodes {
+			if pr == nil || pr.Number < 1 || pr.BaseRepository.NameWithOwner == "" {
+				result.Partial = true
+				continue
+			}
+			if strings.EqualFold(pr.BaseRepository.NameWithOwner, repositoryName) && !seen[pr.Number] {
+				result.Pulls = append(result.Pulls, *pr)
+				seen[pr.Number] = true
+			}
+		}
+	}
+	addPulls(root.ClosedByPullRequestsReferences)
+	if root.SubIssues == nil {
+		result.Partial = true
+	} else {
+		result.Partial = result.Partial || root.SubIssues.PageInfo.HasNextPage
+		for _, issue := range root.SubIssues.Nodes {
+			if issue == nil || issue.Number < 1 {
+				result.Partial = true
+				continue
+			}
+			if !strings.EqualFold(issue.Repository.NameWithOwner, repositoryName) {
+				continue
+			}
+			result.Related = append(result.Related, *issue)
+			addPulls(issue.ClosedByPullRequestsReferences)
+		}
+	}
+	slices.SortFunc(result.Pulls, func(a, b Pull) int { return cmp.Compare(a.Number, b.Number) })
+	if !result.Partial {
+		if ordered := stackOrder(result.Pulls); ordered != nil {
+			result.Pulls = ordered
+			result.Ordered = true
+		}
+	}
+	return result
+}
+
+// stackOrder returns a single chain from its lowest PR to its tip, if one exists.
+func stackOrder(pulls []Pull) []Pull {
+	if len(pulls) < 2 {
+		return pulls
+	}
+	type branch struct{ repository, name string }
+	heads := make(map[branch]int)
+	for i, pr := range pulls {
+		head := branch{strings.ToLower(pr.HeadRepository.NameWithOwner), pr.HeadRefName}
+		if head.repository == "" || head.name == "" || pr.BaseRefName == "" {
+			return nil
+		}
+		if _, exists := heads[head]; exists {
+			return nil
+		}
+		heads[head] = i
+	}
+	next := make(map[int]int)
+	root := -1
+	for i, pr := range pulls {
+		base := branch{strings.ToLower(pr.BaseRepository.NameWithOwner), pr.BaseRefName}
+		parent, found := heads[base]
+		if !found {
+			if root != -1 {
+				return nil
+			}
+			root = i
+			continue
+		}
+		if _, exists := next[parent]; exists {
+			return nil
+		}
+		next[parent] = i
+	}
+	if root == -1 {
+		return nil
+	}
+	ordered := make([]Pull, 0, len(pulls))
+	for i := root; ; {
+		ordered = append(ordered, pulls[i])
+		child, found := next[i]
+		if !found {
+			break
+		}
+		i = child
+	}
+	if len(ordered) != len(pulls) {
+		return nil
+	}
+	return ordered
+}

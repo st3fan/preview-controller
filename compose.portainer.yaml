@@ -5,6 +5,7 @@ services:
     network_mode: host
     environment:
       - PREVIEW_SERVER_TOKEN
+      - PREVIEW_GITHUB_TOKEN
     volumes:
       - type: bind
         source: ${PREVIEW_SERVER_CONFIG:-/etc/preview-server.json}
