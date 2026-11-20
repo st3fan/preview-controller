@@ -4,9 +4,9 @@ A self-hosted controller for stable preview environments associated with SDLC In
 
 The controller accepts an authenticated candidate commit, verifies it in an
 allowlisted public GitHub repository, and builds a separate Docker Compose
-stack. A healthy candidate remains available on a loopback port. Serving the
-stable preview URL and replacing the active target are tracked in
-[#7](https://github.com/st3fan/preview-controller/issues/7).
+stack. When the new stack passes health checks, its stable preview URL switches
+to the new loopback port. The previous stack stays available if the candidate
+fails.
 
 ## Build and run
 
@@ -25,6 +25,8 @@ contains no secret or deployment state. The management listener accepts only a l
 IP address. The service account needs write access to the state and workspace
 roots and access to the local Docker daemon. Run it only on a dedicated preview
 host; Docker builds and containers can execute untrusted project code there.
+The `preview_listen` address is a separate listener for Caddy. See
+[Linux installation and ingress setup](docs/installation.md).
 
 ```sh
 PREVIEW_SERVER_TOKEN='replace-with-a-secret' ./preview-server -config /etc/preview-server.json
@@ -52,6 +54,9 @@ The API returns HTTP 202 with a deployment ID, `queued` status, and a stable
 URL such as `https://123-myproject.preview.example.com`. Verification proceeds
 asynchronously. Read status through `GET /api/deployments/{id}`,
 `GET /api/environments`, and `GET /api/environments/{project:intent}`.
+An authenticated `DELETE /api/environments/{project:intent}` removes a preview.
+If Docker cleanup fails, the route remains removed and the deletion can be
+retried with the same request.
 
 The project's Compose file is restricted to services and named volumes with a
 small set of service options. Build contexts, Dockerfiles, and bind mounts must
@@ -60,11 +65,14 @@ Compose files, interpolation, public port mappings, and unsupported options.
 It creates a unique Compose project per attempt and publishes only the chosen
 service on a random loopback port. A candidate passes the configured HTTP
 health path before its status becomes `healthy`. Failed candidates are cleaned
-up; existing stacks are left running.
+up; existing stacks are left running. After a successful route switch, the
+previous stack is removed. The preview listener accepts only configured stable
+hostnames and proxies only to the active attempt's recorded loopback port.
 
-On a Linux host with Docker Compose, run the opt-in fixture integration test
-with `CGO_ENABLED=0 go test -tags=integration ./internal/runtime`. It builds
-and starts fixture containers and then removes them.
+On a disposable Linux host with Docker Compose, run the opt-in fixture checks
+with `CGO_ENABLED=0 go test -tags=integration -timeout=30m ./internal/runtime
+./internal/ingress`. They build and start fixture containers, exercise the
+preview lifecycle, and remove the containers afterward.
 
 Only public `https://github.com/owner/repo` repositories are supported in this
 first version. Git operations use `go-git`; the server does not run the Git CLI

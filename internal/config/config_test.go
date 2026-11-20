@@ -11,6 +11,7 @@ import (
 func validConfig(root string) Config {
 	return Config{
 		ManagementListen:   "127.0.0.1:8080",
+		PreviewListen:      "127.0.0.1:8081",
 		PreviewDomain:      "preview.example.com",
 		StateRoot:          root,
 		WorkspaceRoot:      filepath.Join(filepath.Dir(root), "workspaces"),
@@ -60,6 +61,8 @@ func TestValidateRejectsUnsafeSettings(t *testing.T) {
 		edit func(*Config)
 	}{
 		{"public management listener", func(c *Config) { c.ManagementListen = "0.0.0.0:8080" }},
+		{"public preview listener", func(c *Config) { c.PreviewListen = "0.0.0.0:8081" }},
+		{"shared listeners", func(c *Config) { c.PreviewListen = c.ManagementListen }},
 		{"non-GitHub repository", func(c *Config) {
 			p := c.Projects["myproject"]
 			p.Repository = "https://elsewhere.test/x/y"

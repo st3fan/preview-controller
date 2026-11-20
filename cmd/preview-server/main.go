@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,6 +16,7 @@ import (
 	"github.com/st3fan/preview-controller/internal/config"
 	"github.com/st3fan/preview-controller/internal/deploy"
 	"github.com/st3fan/preview-controller/internal/gitverify"
+	"github.com/st3fan/preview-controller/internal/ingress"
 	"github.com/st3fan/preview-controller/internal/runtime"
 	"github.com/st3fan/preview-controller/internal/state"
 )
@@ -46,7 +48,7 @@ func run(settings string) error {
 		return err
 	}
 	defer service.Close()
-	server := &http.Server{
+	management := &http.Server{
 		Addr:              cfg.ManagementListen,
 		Handler:           api.Handler(service, cfg.Token()),
 		ReadHeaderTimeout: 10 * time.Second,
@@ -55,19 +57,45 @@ func run(settings string) error {
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    16 << 10,
 	}
+	preview := &http.Server{
+		Addr:              cfg.PreviewListen,
+		Handler:           ingress.Handler(cfg, service),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
+	managementListener, err := net.Listen("tcp", cfg.ManagementListen)
+	if err != nil {
+		return err
+	}
+	defer managementListener.Close()
+	previewListener, err := net.Listen("tcp", cfg.PreviewListen)
+	if err != nil {
+		return err
+	}
+	defer previewListener.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go func() {
-		<-ctx.Done()
-		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdown); err != nil {
-			slog.Error("shutdown failed", "error", err)
-		}
-	}()
+	errorsFromServers := make(chan error, 2)
+	go func() { errorsFromServers <- management.Serve(managementListener) }()
+	go func() { errorsFromServers <- preview.Serve(previewListener) }()
 	slog.Info("management API listening", "address", cfg.ManagementListen)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	slog.Info("preview ingress listening", "address", cfg.PreviewListen)
+	var serveErr error
+	select {
+	case <-ctx.Done():
+	case serveErr = <-errorsFromServers:
+	}
+	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := management.Shutdown(shutdown); err != nil {
+		slog.Error("management shutdown failed", "error", err)
+	}
+	if err := preview.Shutdown(shutdown); err != nil {
+		slog.Error("preview shutdown failed", "error", err)
+	}
+	if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+		return serveErr
 	}
 	return nil
 }

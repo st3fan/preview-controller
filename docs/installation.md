@@ -1,0 +1,76 @@
+# Linux installation and ingress
+
+Use a dedicated Linux preview host. Docker access is effectively host-level
+access: repository builds and Compose services execute untrusted project code.
+Do not place unrelated workloads or secrets on this host.
+
+## Prerequisites
+
+- Go 1.27 or newer on the build machine, Docker Engine and Docker Compose on
+  the Linux host, and outbound HTTPS access to public GitHub repositories.
+- Wildcard DNS for `*.preview.example.com` pointing at Caddy and a wildcard TLS
+  certificate or Caddy DNS challenge setup. A wildcard covers the flat
+  `<intent>-<project>.preview.example.com` hostname.
+- A dedicated service account that can access the Docker daemon. Membership in
+  the `docker` group grants powerful host access; restrict it to this host.
+
+Build with `GOOS=linux CGO_ENABLED=0 go build -o preview-server
+./cmd/preview-server`, then install the executable at
+`/usr/local/bin/preview-server`. Create `/etc/preview-server.json` from
+[`config/preview-server.example.json`](../config/preview-server.example.json).
+Set both listeners to loopback when Caddy runs on the same host. Set
+`state_root` and `workspace_root` to separate, dedicated directories owned by
+the service account. Place the bearer token in `/etc/preview-server.env` with
+mode `0600`:
+
+```sh
+PREVIEW_SERVER_TOKEN=replace-with-a-long-random-secret
+```
+
+An example systemd unit is:
+
+```ini
+[Unit]
+Description=Preview Controller
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=preview-server
+SupplementaryGroups=docker
+EnvironmentFile=/etc/preview-server.env
+ExecStart=/usr/local/bin/preview-server -config /etc/preview-server.json
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+The operator configures Caddy once. With a previously provisioned wildcard
+certificate, a Caddyfile route can be:
+
+```caddyfile
+*.preview.example.com {
+    tls /etc/caddy/certs/preview-wildcard.pem /etc/caddy/certs/preview-wildcard-key.pem
+    reverse_proxy 127.0.0.1:8081
+}
+```
+
+Match the Caddy upstream to `preview_listen`. Keep the management API on its
+own home-lab or loopback listener, for example `127.0.0.1:8080`. Caddy does not
+need to reload when previews are created or replaced; the Go controller reads
+the active route from JSON state. Do not route the management API through the
+public wildcard site.
+
+Send a deployment request to the management listener with the bearer token and
+a full 40-character commit SHA. The request queues work; check
+`GET /api/deployments/{id}` or `GET /api/environments/{project:intent}` until
+the attempt becomes `healthy`. If a replacement fails, `active_commit` still
+identifies the previous working preview. To remove an environment, send an
+authenticated `DELETE /api/environments/{project:intent}`. Retry the same
+request if Docker cleanup reports a failure.

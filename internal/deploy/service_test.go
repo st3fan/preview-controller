@@ -14,7 +14,11 @@ import (
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
-type fakeRunner struct{ err error }
+type fakeRunner struct {
+	err        error
+	cleanupErr error
+	checkFail  bool
+}
 
 func (f fakeRunner) Run(_ context.Context, _ string, _ int64, _ config.Project, _ state.Attempt, progress runtime.Progress) (runtime.Result, error) {
 	result := runtime.Result{Port: 12345, Workspace: "/tmp/candidate", ComposeProject: "pvtest"}
@@ -27,9 +31,128 @@ func (f fakeRunner) Run(_ context.Context, _ string, _ int64, _ config.Project, 
 	return result, f.err
 }
 
-func (f fakeRunner) Cleanup(context.Context, string, int64, state.Attempt) error { return nil }
-func (f fakeRunner) Check(context.Context, state.Attempt, config.Project) (bool, error) {
-	return true, nil
+func (f fakeRunner) Cleanup(context.Context, string, int64, state.Attempt) error {
+	return f.cleanupErr
+}
+func (f fakeRunner) Check(_ context.Context, attempt state.Attempt, _ config.Project) (bool, error) {
+	return !f.checkFail || attempt.Port != 12345, nil
+}
+
+func TestFailedCutoverKeepsPreviousTarget(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	store, err := state.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := state.Attempt{ID: "deployment-0123456789abcdef0123456789abcdef", Commit: strings.Repeat("b", 40), Status: state.Healthy, Port: 12344}
+	if err := store.Save(state.Environment{ID: state.ID("myproject", 9), Project: "myproject", Intent: 9,
+		ActiveDeploymentID: old.ID, ActiveCommit: old.Commit, Attempts: []state.Attempt{old}}); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(testConfig(root), store, fakeVerifier{}, fakeRunner{checkFail: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	_, _, err = s.Submit("myproject", 9, strings.Repeat("a", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		env, err := s.GetEnvironment("myproject:9")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(env.Attempts) == 2 && env.Attempts[1].Status == state.Failed {
+			port, err := s.ActivePort("myproject", 9)
+			if err != nil || port != old.Port || env.ActiveCommit != old.Commit || !strings.Contains(env.Attempts[1].Error, "cutover") {
+				t.Fatalf("failed cutover state = %+v, port %d, error %v", env, port, err)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("candidate did not fail cutover")
+}
+
+func TestDeleteRemovesRouteAndSupportsRetry(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	store, err := state.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := state.Attempt{ID: "deployment-0123456789abcdef0123456789abcdef", Commit: strings.Repeat("b", 40), Status: state.Healthy, Port: 12344}
+	if err := store.Save(state.Environment{ID: state.ID("myproject", 9), Project: "myproject", Intent: 9,
+		ActiveDeploymentID: active.ID, ActiveCommit: active.Commit, Attempts: []state.Attempt{active}}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig(root)
+	s, err := New(cfg, store, fakeVerifier{}, fakeRunner{cleanupErr: errors.New("Docker unavailable")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteEnvironment("myproject:9"); err == nil {
+		t.Fatal("cleanup failure was hidden")
+	}
+	if _, err := s.ActivePort("myproject", 9); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("route survived deletion: %v", err)
+	}
+	s.Close()
+	retry, err := New(cfg, store, fakeVerifier{}, fakeRunner{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer retry.Close()
+	if err := retry.DeleteEnvironment("myproject:9"); err != nil {
+		t.Fatal(err)
+	}
+	if err := retry.DeleteEnvironment("myproject:9"); err != nil {
+		t.Fatalf("idempotent retry: %v", err)
+	}
+	if _, err := store.Load("myproject", 9); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("state remained after deletion: %v", err)
+	}
+}
+
+func TestFirstDeploymentAndRestartRecovery(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "state")
+	store, err := state.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig(root)
+	s, err := New(cfg, store, fakeVerifier{}, fakeRunner{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, _, err := s.Submit("myproject", 11, strings.Repeat("a", 40))
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		env, err := s.GetEnvironment("myproject:11")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if env.ActiveDeploymentID == attempt.ID {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if port, err := s.ActivePort("myproject", 11); err != nil || port != 12345 {
+		t.Fatalf("first active port = %d, %v", port, err)
+	}
+	s.Close()
+	restarted, err := New(cfg, store, fakeVerifier{}, fakeRunner{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restarted.Close()
+	if port, err := restarted.ActivePort("myproject", 11); err != nil || port != 12345 {
+		t.Fatalf("recovered active port = %d, %v", port, err)
+	}
 }
 
 type fakeVerifier struct {
@@ -225,7 +348,7 @@ func TestRuntimeCandidateTransitionsAndPreservesActiveOnFailure(t *testing.T) {
 				t.Fatal(err)
 			}
 			previous := state.Environment{ID: state.ID("myproject", 123), Project: "myproject", Intent: 123,
-				ActiveDeploymentID: "deployment-previous", ActiveCommit: strings.Repeat("c", 40), Attempts: []state.Attempt{}}
+				ActiveDeploymentID: "deployment-previous", ActiveCommit: strings.Repeat("c", 40), Attempts: []state.Attempt{{ID: "deployment-previous", Commit: strings.Repeat("c", 40), Status: state.Healthy, Port: 12344}}}
 			if err := store.Save(previous); err != nil {
 				t.Fatal(err)
 			}
@@ -254,7 +377,11 @@ func TestRuntimeCandidateTransitionsAndPreservesActiveOnFailure(t *testing.T) {
 					if failure {
 						want = state.Failed
 					}
-					if candidate.ID != attempt.ID || candidate.Status != want || candidate.Port != 12345 || env.ActiveDeploymentID != previous.ActiveDeploymentID {
+					active := attempt.ID
+					if failure {
+						active = previous.ActiveDeploymentID
+					}
+					if candidate.ID != attempt.ID || candidate.Status != want || candidate.Port != 12345 || env.ActiveDeploymentID != active {
 						t.Fatalf("candidate and active state = %+v, %+v", candidate, env)
 					}
 					return

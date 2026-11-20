@@ -19,6 +19,7 @@ type Service interface {
 	ListEnvironments() ([]state.Environment, error)
 	GetEnvironment(string) (state.Environment, error)
 	GetDeployment(string) (state.Attempt, state.Environment, error)
+	DeleteEnvironment(string) error
 }
 
 func Handler(service Service, token string) http.Handler {
@@ -96,6 +97,24 @@ func Handler(service Service, token string) http.Handler {
 			return
 		}
 		writeJSON(w, http.StatusOK, env)
+	})
+	mux.HandleFunc("DELETE /api/environments/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !authorized(r.Header.Get("Authorization"), token) {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		if err := service.DeleteEnvironment(r.PathValue("id")); err != nil {
+			switch {
+			case errors.Is(err, state.ErrNotFound):
+				writeError(w, http.StatusNotFound, "environment not found")
+			case errors.Is(err, deploy.ErrConflict):
+				writeError(w, http.StatusConflict, err.Error())
+			default:
+				writeError(w, http.StatusInternalServerError, "could not delete environment")
+			}
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /api/deployments/{id}", func(w http.ResponseWriter, r *http.Request) {
 		attempt, env, err := service.GetDeployment(r.PathValue("id"))

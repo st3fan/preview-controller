@@ -60,6 +60,7 @@ func New(root string) (*Runtime, error) {
 	}
 	return &Runtime{root: root, dockerConfig: dockerConfig, client: &http.Client{
 		Timeout:       5 * time.Second,
+		Transport:     &http.Transport{Proxy: nil},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}, nil
 }

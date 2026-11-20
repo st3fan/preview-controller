@@ -11,7 +11,7 @@ import (
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
-type stubService struct{ submits int }
+type stubService struct{ submits, deletes int }
 
 func (s *stubService) Submit(project string, intent int64, commit string) (state.Attempt, state.Environment, error) {
 	s.submits++
@@ -31,6 +31,27 @@ func (s *stubService) GetDeployment(id string) (state.Attempt, state.Environment
 		return state.Attempt{}, state.Environment{}, state.ErrNotFound
 	}
 	return state.Attempt{ID: id}, state.Environment{ID: "myproject:123"}, nil
+}
+func (s *stubService) DeleteEnvironment(id string) error {
+	s.deletes++
+	return nil
+}
+
+func TestDeleteRequiresBearerToken(t *testing.T) {
+	service := &stubService{}
+	handler := Handler(service, "shared-secret")
+	request := httptest.NewRequest(http.MethodDelete, "/api/environments/myproject:123", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized || service.deletes != 0 {
+		t.Fatalf("unauthorized deletion: %d, %d", response.Code, service.deletes)
+	}
+	request.Header.Set("Authorization", "Bearer shared-secret")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent || service.deletes != 1 {
+		t.Fatalf("authorized deletion: %d, %d", response.Code, service.deletes)
+	}
 }
 
 func TestDeploymentRequestAuthenticationAndResponse(t *testing.T) {

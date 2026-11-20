@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"sort"
@@ -50,6 +51,8 @@ type Service struct {
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
 	closed   bool
+	deleting map[string]bool
+	running  map[string]bool
 }
 
 func New(cfg config.Config, store *state.Store, verifier Verifier, runners ...Runner) (*Service, error) {
@@ -57,7 +60,7 @@ func New(cfg config.Config, store *state.Store, verifier Verifier, runners ...Ru
 		return nil, errors.New("state store and verifier are required")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{cfg: cfg, store: store, verifier: verifier, sem: make(chan struct{}, 4), ctx: ctx, cancel: cancel}
+	s := &Service{cfg: cfg, store: store, verifier: verifier, sem: make(chan struct{}, 4), ctx: ctx, cancel: cancel, deleting: map[string]bool{}, running: map[string]bool{}}
 	if len(runners) > 0 {
 		s.runner = runners[0]
 	}
@@ -96,11 +99,18 @@ func (s *Service) Submit(project string, intent int64, commit string) (state.Att
 	if s.closed {
 		return state.Attempt{}, state.Environment{}, ErrClosed
 	}
+	key := state.ID(project, intent)
+	if s.deleting[key] || s.running[key] {
+		return state.Attempt{}, state.Environment{}, ErrConflict
+	}
 	env, err := s.store.Load(project, intent)
 	if errors.Is(err, state.ErrNotFound) {
 		env = state.Environment{ID: state.ID(project, intent), Project: project, Intent: intent, URL: url, Attempts: []state.Attempt{}}
 	} else if err != nil {
 		return state.Attempt{}, state.Environment{}, err
+	}
+	if env.Deleting {
+		return state.Attempt{}, state.Environment{}, ErrConflict
 	}
 	if len(env.Attempts) > 0 && inProgress(env.Attempts[len(env.Attempts)-1].Status) {
 		return state.Attempt{}, state.Environment{}, ErrConflict
@@ -127,6 +137,7 @@ func (s *Service) Submit(project string, intent int64, commit string) (state.Att
 	if err := s.store.Save(env); err != nil {
 		return state.Attempt{}, state.Environment{}, err
 	}
+	s.running[key] = true
 	s.wg.Add(1)
 	release = false
 	go s.verify(project, intent, id, projectCfg.Repository, attempt.Commit)
@@ -178,8 +189,13 @@ func (s *Service) GetDeployment(id string) (state.Attempt, state.Environment, er
 }
 
 func (s *Service) verify(project string, intent int64, id, repository, commit string) {
-	defer s.wg.Done()
-	defer func() { <-s.sem }()
+	defer func() {
+		s.mu.Lock()
+		delete(s.running, state.ID(project, intent))
+		s.mu.Unlock()
+		<-s.sem
+		s.wg.Done()
+	}()
 	if err := s.update(project, intent, id, state.Fetching, ""); err != nil {
 		slog.Error("record fetching state", "deployment", id, "error", err)
 		return
@@ -218,9 +234,164 @@ func (s *Service) verify(project string, intent int64, id, repository, commit st
 		}
 		return
 	}
-	if err := s.updateWithResult(project, intent, id, state.Healthy, "", &result); err != nil {
-		slog.Error("record healthy candidate", "deployment", id, "error", err)
+	previous, err := s.activate(project, intent, candidate, result)
+	if err != nil {
+		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		cleanupErr := s.runner.Cleanup(cleanup, project, intent, candidate)
+		cancel()
+		message := "proxy cutover failed: " + bounded(err.Error())
+		if cleanupErr != nil {
+			message += "; cleanup: " + bounded(cleanupErr.Error())
+		}
+		if updateErr := s.update(project, intent, id, state.Failed, message); updateErr != nil {
+			slog.Error("record cutover failure", "deployment", id, "error", updateErr)
+		}
+		return
 	}
+	if previous.ID != "" && previous.ID != id {
+		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		if err := s.runner.Cleanup(cleanup, project, intent, previous); err != nil {
+			slog.Error("retire previous attempt", "deployment", previous.ID, "error", err)
+		} else if err := s.update(project, intent, previous.ID, state.Retired, ""); err != nil {
+			slog.Error("record retired attempt", "deployment", previous.ID, "error", err)
+		}
+		cancel()
+	}
+}
+
+func (s *Service) activate(project string, intent int64, candidate state.Attempt, result runtime.Result) (state.Attempt, error) {
+	checked := candidate
+	checked.Port = result.Port
+	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
+	alive, err := s.runner.Check(ctx, checked, s.cfg.Projects[project])
+	cancel()
+	if err != nil {
+		return state.Attempt{}, err
+	}
+	if !alive {
+		return state.Attempt{}, errors.New("candidate failed its cutover health check")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	env, err := s.store.Load(project, intent)
+	if err != nil {
+		return state.Attempt{}, err
+	}
+	if env.Deleting {
+		return state.Attempt{}, ErrConflict
+	}
+	var previous state.Attempt
+	for _, item := range env.Attempts {
+		if item.ID == env.ActiveDeploymentID {
+			previous = item
+		}
+	}
+	found := false
+	for i := range env.Attempts {
+		if env.Attempts[i].ID == candidate.ID {
+			if env.Attempts[i].Status != state.Starting {
+				return state.Attempt{}, fmt.Errorf("candidate has unexpected status %s", env.Attempts[i].Status)
+			}
+			env.Attempts[i].Status = state.Healthy
+			env.Attempts[i].Port = result.Port
+			env.Attempts[i].Workspace = result.Workspace
+			env.Attempts[i].ComposeProject = result.ComposeProject
+			env.Attempts[i].UpdatedAt = time.Now().UTC()
+			found = true
+			break
+		}
+	}
+	if !found {
+		return state.Attempt{}, state.ErrNotFound
+	}
+	env.ActiveDeploymentID = candidate.ID
+	env.ActiveCommit = candidate.Commit
+	env.UpdatedAt = time.Now().UTC()
+	if err := s.store.Save(env); err != nil {
+		return state.Attempt{}, err
+	}
+	return previous, nil
+}
+
+func (s *Service) ActivePort(project string, intent int64) (int, error) {
+	env, err := s.store.Load(project, intent)
+	if err != nil {
+		return 0, err
+	}
+	if env.Deleting || env.ActiveDeploymentID == "" {
+		return 0, state.ErrNotFound
+	}
+	for _, attempt := range env.Attempts {
+		if attempt.ID == env.ActiveDeploymentID && attempt.Status == state.Healthy && attempt.Port > 0 && attempt.Port <= 65535 {
+			return attempt.Port, nil
+		}
+	}
+	return 0, state.ErrNotFound
+}
+
+func (s *Service) DeleteEnvironment(id string) error {
+	parts := strings.Split(id, ":")
+	if len(parts) != 2 {
+		return state.ErrNotFound
+	}
+	project, intentText := parts[0], parts[1]
+	if _, ok := s.cfg.Projects[project]; !ok {
+		return state.ErrNotFound
+	}
+	intent, err := strconv.ParseInt(intentText, 10, 64)
+	if err != nil || intent < 1 {
+		return state.ErrNotFound
+	}
+	key := state.ID(project, intent)
+	s.mu.Lock()
+	if s.deleting[key] || s.running[key] {
+		s.mu.Unlock()
+		return ErrConflict
+	}
+	env, err := s.store.Load(project, intent)
+	if errors.Is(err, state.ErrNotFound) {
+		s.mu.Unlock()
+		return nil
+	}
+	if err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	for _, attempt := range env.Attempts {
+		if inProgress(attempt.Status) {
+			s.mu.Unlock()
+			return ErrConflict
+		}
+	}
+	env.Deleting = true
+	env.ActiveDeploymentID = ""
+	env.ActiveCommit = ""
+	env.UpdatedAt = time.Now().UTC()
+	if err := s.store.Save(env); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.deleting[key] = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.deleting, key)
+		s.mu.Unlock()
+	}()
+	var problems []error
+	if s.runner != nil {
+		for _, attempt := range env.Attempts {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+			if err := s.runner.Cleanup(ctx, project, intent, attempt); err != nil {
+				problems = append(problems, fmt.Errorf("%s: %w", attempt.ID, err))
+			}
+			cancel()
+		}
+	}
+	if len(problems) > 0 {
+		return errors.Join(problems...)
+	}
+	return s.store.Delete(project, intent)
 }
 
 func (s *Service) update(project string, intent int64, id string, status state.Status, message string) error {
@@ -259,40 +430,67 @@ func (s *Service) reconcile() error {
 	}
 	for _, env := range envs {
 		changed := false
+		activeFound := false
 		for i := range env.Attempts {
-			if env.Attempts[i].Status == state.Healthy && s.runner != nil {
+			attempt := &env.Attempts[i]
+			if attempt.ID == env.ActiveDeploymentID && attempt.Status == state.Healthy {
+				activeFound = true
+			}
+			if attempt.Status == state.Healthy && s.runner != nil && !env.Deleting && attempt.ID == env.ActiveDeploymentID {
 				if projectCfg, ok := s.cfg.Projects[env.Project]; ok {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					alive, err := s.runner.Check(ctx, env.Attempts[i], projectCfg)
+					alive, err := s.runner.Check(ctx, *attempt, projectCfg)
 					cancel()
 					if err != nil {
-						slog.Error("inspect previous runtime", "deployment", env.Attempts[i].ID, "error", err)
-					} else if !alive {
+						slog.Error("inspect previous runtime", "deployment", attempt.ID, "error", err)
+					}
+					if err != nil || !alive {
 						now := time.Now().UTC()
-						env.Attempts[i].Status = state.Failed
-						env.Attempts[i].Error = "runtime was not healthy after controller restart"
-						env.Attempts[i].UpdatedAt = now
+						attempt.Status = state.Failed
+						attempt.Error = "runtime was not healthy after controller restart"
+						attempt.UpdatedAt = now
+						env.ActiveDeploymentID = ""
+						env.ActiveCommit = ""
 						env.UpdatedAt = now
 						changed = true
 					}
 				}
 			}
-			if inProgress(env.Attempts[i].Status) {
+			if attempt.Status == state.Healthy && s.runner != nil && attempt.ID != env.ActiveDeploymentID {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				err := s.runner.Cleanup(ctx, env.Project, env.Intent, *attempt)
+				cancel()
+				if err != nil {
+					slog.Error("cleanup inactive runtime", "deployment", attempt.ID, "error", err)
+				} else {
+					attempt.Status = state.Retired
+					attempt.UpdatedAt = time.Now().UTC()
+					env.UpdatedAt = attempt.UpdatedAt
+					changed = true
+				}
+			}
+			if inProgress(attempt.Status) {
 				message := "controller restarted before deployment completed"
 				if s.runner != nil {
 					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-					if err := s.runner.Cleanup(ctx, env.Project, env.Intent, env.Attempts[i]); err != nil {
+					if err := s.runner.Cleanup(ctx, env.Project, env.Intent, *attempt); err != nil {
 						message += "; cleanup: " + bounded(err.Error())
 					}
 					cancel()
 				}
 				now := time.Now().UTC()
-				env.Attempts[i].Status = state.Failed
-				env.Attempts[i].Error = message
-				env.Attempts[i].UpdatedAt = now
+				attempt.Status = state.Failed
+				attempt.Error = message
+				attempt.UpdatedAt = now
 				env.UpdatedAt = now
 				changed = true
 			}
+		}
+		if env.ActiveDeploymentID != "" && !activeFound {
+			env.ActiveDeploymentID = ""
+			env.ActiveCommit = ""
+			env.UpdatedAt = time.Now().UTC()
+			changed = true
 		}
 		if changed {
 			if err := s.store.Save(env); err != nil {
