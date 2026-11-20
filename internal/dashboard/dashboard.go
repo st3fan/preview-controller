@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ var commitSHA = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 type environment struct {
 	Intent      int64
 	IntentURL   string
+	IssueTitle  string
 	URL         string
 	Commit      string
 	ShortCommit string
@@ -69,6 +71,12 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 			}
 			if len(env.Attempts) > 0 {
 				row.Status = env.Attempts[len(env.Attempts)-1].Status
+			}
+			for _, attempt := range slices.Backward(env.Attempts) {
+				if attempt.IssueTitle != "" {
+					row.IssueTitle = attempt.IssueTitle
+					break
+				}
 			}
 			if !env.Deleting {
 				for _, attempt := range env.Attempts {

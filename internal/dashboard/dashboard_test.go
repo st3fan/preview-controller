@@ -60,7 +60,8 @@ func TestDashboard(t *testing.T) {
 		URL:          "https://alpha-18.preview.example.com",
 		ActiveCommit: active,
 		Attempts: []state.Attempt{
-			{ID: "deployment-0123456789abcdef0123456789abcdef", Status: state.Healthy, ComposeProject: "pv0123456789abcdef0123456789abcdef"},
+			{ID: "deployment-0123456789abcdef0123456789abcdef", Status: state.Healthy, IssueTitle: "Previous title", ComposeProject: "pv0123456789abcdef0123456789abcdef"},
+			{Status: state.Queued, IssueTitle: "Fix <preview> & routing"},
 			{Status: state.Failed, Error: "private command output", Workspace: "/private/workspace"},
 		},
 	}
@@ -68,9 +69,10 @@ func TestDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	event := readEvent(t, events)
-	requireText(t, event, "<h2>alpha</h2>", "#18", env.URL, active, ">failed<", `href="/dashboard/logs/alpha/18/deployment-0123456789abcdef0123456789abcdef">Live logs`)
+	requireText(t, event, "<h2>alpha</h2>", "#18 Fix &lt;preview&gt; &amp; routing", env.URL, active, ">failed<", `href="/dashboard/logs/alpha/18/deployment-0123456789abcdef0123456789abcdef">Live logs`)
 
 	env.Intent = 19
+	env.Attempts = nil
 	env.ActiveCommit = ""
 	env.ID = state.ID(env.Project, env.Intent)
 	if err := store.Save(env); err != nil {
@@ -89,7 +91,8 @@ func TestDashboard(t *testing.T) {
 	event = readEvent(t, events)
 	for _, body := range []string{event, readPage(t, client, server.URL+"/", http.StatusOK)} {
 		requireText(t, body,
-			`href="https://github.com/example/alpha/issues/18" target="_blank" rel="noopener">#18</a>`,
+			`href="https://github.com/example/alpha/issues/18" target="_blank" rel="noopener">#18 Fix &lt;preview&gt; &amp; routing</a>`,
+			`href="https://github.com/example/alpha/issues/19" target="_blank" rel="noopener">#19</a>`,
 			`href="https://github.com/example/alpha/commit/`+active+`" target="_blank" rel="noopener"><code title="`+active+`">0123456</code></a>`,
 			`<td>None</td>`, `<th scope="row">#20</th>`, `<td><code title="`+active+`">0123456</code></td>`,
 		)
