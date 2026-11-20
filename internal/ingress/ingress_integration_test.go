@@ -175,6 +175,12 @@ func TestFullPreviewLifecycle(t *testing.T) {
 		t.Fatalf("first active commit: %s", env.ActiveCommit)
 	}
 	preview("first")
+	logRequest := httptest.NewRequest(http.MethodGet, "http://fixture-123.preview.example.com/dashboard/logs/fixture/123/"+firstAttempt.ID, nil)
+	logResponse := httptest.NewRecorder()
+	ingress.Handler(cfg, service).ServeHTTP(logResponse, logRequest)
+	if logResponse.Code != http.StatusNotFound {
+		t.Fatalf("preview hostname log path returned %d", logResponse.Code)
+	}
 	secondAttempt := submit(second)
 	if env := wait(secondAttempt.ID, state.Healthy); env.ActiveCommit != second {
 		t.Fatalf("replacement active commit: %s", env.ActiveCommit)

@@ -109,7 +109,12 @@ Docker is the source of runtime container state.
 
 The management API and read-only dashboard are restricted to the configured home-lab listener.
 Open `/` on that listener to see preview links, active commits, and live deployment
-status grouped by project.
+status grouped by project. Select **Live logs** next to a deployment attempt to
+see its last 100 lines per Compose service container, followed by new output.
+The log URL stays tied to that attempt during replacement. Logs become
+unavailable once the attempt is removed. Treat log URLs and output as operator
+information.
+
 Candidate requests require a full 40-character commit SHA and the bearer
 secret. The authenticated request is the approval to preview that commit.
 
