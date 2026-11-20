@@ -12,13 +12,16 @@ import (
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
-type stubRouter struct{ port int }
+type stubRouter struct {
+	port   int
+	status state.Status
+}
 
-func (s stubRouter) ActivePort(project string, intent int64) (int, error) {
-	if project != "my-project-7" || intent != 123 || s.port == 0 {
-		return 0, state.ErrNotFound
+func (s stubRouter) PreviewRoute(project string, intent int64) (int, state.Status, error) {
+	if project != "my-project-7" || intent != 123 || (s.port == 0 && s.status == "") {
+		return 0, "", state.ErrNotFound
 	}
-	return s.port, nil
+	return s.port, s.status, nil
 }
 
 func TestRoutesOnlyConfiguredStableHost(t *testing.T) {
@@ -38,7 +41,7 @@ func TestRoutesOnlyConfiguredStableHost(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.Config{PreviewDomain: "preview.example.com", Projects: map[string]config.Project{"my-project-7": {}}}
-	handler := Handler(cfg, stubRouter{port: port})
+	handler := Handler(cfg, stubRouter{port: port, status: state.Failed})
 	for _, host := range []string{
 		"other-123.preview.example.com",
 		"my-project-7-0123.preview.example.com",
@@ -66,5 +69,35 @@ func TestRoutesOnlyConfiguredStableHost(t *testing.T) {
 	missing.ServeHTTP(w, r)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("inactive preview returned %d", w.Code)
+	}
+}
+
+func TestPreviewDeploymentStatus(t *testing.T) {
+	cfg := config.Config{PreviewDomain: "preview.example.com", Projects: map[string]config.Project{"my-project-7": {}}}
+	for _, tc := range []struct {
+		status  state.Status
+		message string
+		refresh bool
+	}{
+		{state.Queued, "Queued for deployment.", true},
+		{state.Fetching, "Fetching source code.", true},
+		{state.Verified, "Source verified.", true},
+		{state.Building, "Building the preview.", true},
+		{state.Starting, "Starting the preview and checking its health.", true},
+		{state.Failed, "Preview deployment failed", false},
+	} {
+		t.Run(string(tc.status), func(t *testing.T) {
+			handler := Handler(cfg, stubRouter{status: tc.status})
+			r := httptest.NewRequest(http.MethodGet, "https://my-project-7-123.preview.example.com/hello?x=1", nil)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			if w.Code != http.StatusServiceUnavailable || w.Header().Get("Content-Type") != "text/html; charset=utf-8" || w.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("status response: %d %v", w.Code, w.Header())
+			}
+			body := w.Body.String()
+			if !strings.Contains(body, tc.message) || strings.Contains(body, `http-equiv="refresh" content="3"`) != tc.refresh {
+				t.Fatalf("unexpected status page: %s", body)
+			}
+		})
 	}
 }
