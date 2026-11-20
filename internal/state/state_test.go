@@ -58,7 +58,13 @@ func TestStoreRejectsSymlinkAndTraversal(t *testing.T) {
 	if err := store.Save(Environment{ID: ID("linked", 1), Project: "linked", Intent: 1}); err == nil {
 		t.Fatal("symlink project directory was accepted")
 	}
+	if err := store.Delete("linked", 1); err == nil {
+		t.Fatal("symlink project directory was accepted for deletion")
+	}
 	if _, err := store.Load("missing", 1); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing state error = %v", err)
+	}
+	if err := store.Delete("missing", 1); err != nil {
+		t.Fatalf("idempotent deletion: %v", err)
 	}
 }

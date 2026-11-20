@@ -24,6 +24,7 @@ const (
 	Building Status = "building"
 	Starting Status = "starting"
 	Healthy  Status = "healthy"
+	Retired  Status = "retired"
 	Failed   Status = "failed"
 )
 
@@ -46,6 +47,7 @@ type Environment struct {
 	URL                string    `json:"url"`
 	ActiveDeploymentID string    `json:"active_deployment_id,omitempty"`
 	ActiveCommit       string    `json:"active_commit,omitempty"`
+	Deleting           bool      `json:"deleting,omitempty"`
 	Attempts           []Attempt `json:"attempts"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
@@ -129,6 +131,45 @@ func (s *Store) Save(env Environment) error {
 		return err
 	}
 	if err := os.Rename(temp, name); err != nil {
+		return err
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	return d.Sync()
+}
+
+func (s *Store) Delete(project string, intent int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := validateKey(project, intent); err != nil {
+		return err
+	}
+	dir := filepath.Join(s.root, project)
+	name := filepath.Join(dir, strconv.FormatInt(intent, 10)+".json")
+	dirInfo, err := os.Lstat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !dirInfo.IsDir() || dirInfo.Mode()&os.ModeSymlink != 0 {
+		return errors.New("project state path must be a real directory")
+	}
+	info, err := os.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return errors.New("environment state path must be a regular file")
+	}
+	if err := os.Remove(name); err != nil {
 		return err
 	}
 	d, err := os.Open(dir)

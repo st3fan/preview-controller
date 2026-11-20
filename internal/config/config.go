@@ -26,6 +26,7 @@ var (
 // Config contains operator settings. Deployment state is stored separately.
 type Config struct {
 	ManagementListen   string             `json:"management_listen"`
+	PreviewListen      string             `json:"preview_listen"`
 	PreviewDomain      string             `json:"preview_domain"`
 	StateRoot          string             `json:"state_root"`
 	WorkspaceRoot      string             `json:"workspace_root"`
@@ -77,17 +78,14 @@ func Load(filename string) (Config, error) {
 func (c Config) Token() string { return c.token }
 
 func (c Config) Validate() error {
-	host, port, err := net.SplitHostPort(c.ManagementListen)
-	if err != nil {
-		return fmt.Errorf("management_listen: %w", err)
+	if err := validateListener(c.ManagementListen, "management_listen"); err != nil {
+		return err
 	}
-	ip := net.ParseIP(host)
-	if ip == nil || (!ip.IsLoopback() && !ip.IsPrivate()) {
-		return errors.New("management_listen must use a loopback or private IP address")
+	if err := validateListener(c.PreviewListen, "preview_listen"); err != nil {
+		return err
 	}
-	n, err := strconv.Atoi(port)
-	if err != nil || n < 1 || n > 65535 {
-		return errors.New("management_listen has an invalid port")
+	if c.ManagementListen == c.PreviewListen {
+		return errors.New("management_listen and preview_listen must differ")
 	}
 	if err := validateDomain(c.PreviewDomain); err != nil {
 		return fmt.Errorf("preview_domain: %w", err)
@@ -114,6 +112,22 @@ func (c Config) Validate() error {
 		if err := project.Validate(); err != nil {
 			return fmt.Errorf("project %q: %w", name, err)
 		}
+	}
+	return nil
+}
+
+func validateListener(address, name string) error {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
+	ip := net.ParseIP(host)
+	if ip == nil || (!ip.IsLoopback() && !ip.IsPrivate()) {
+		return fmt.Errorf("%s must use a loopback or private IP address", name)
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("%s has an invalid port", name)
 	}
 	return nil
 }
