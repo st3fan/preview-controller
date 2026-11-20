@@ -14,6 +14,7 @@ import (
 type stubService struct {
 	submits, deletes int
 	issueTitle       string
+	environments     []state.Environment
 }
 
 func (s *stubService) SubmitWithIssueTitle(project string, intent int64, commit, title string) (state.Attempt, state.Environment, error) {
@@ -22,11 +23,19 @@ func (s *stubService) SubmitWithIssueTitle(project string, intent int64, commit,
 	return state.Attempt{ID: "deployment-1", Status: state.Queued}, state.Environment{ID: state.ID(project, intent), URL: "https://myproject-123.preview.example.com"}, nil
 }
 func (s *stubService) ListEnvironments() ([]state.Environment, error) {
+	if s.environments != nil {
+		return s.environments, nil
+	}
 	return []state.Environment{}, nil
 }
 func (s *stubService) GetEnvironment(id string) (state.Environment, error) {
 	if id != "myproject:123" {
 		return state.Environment{}, state.ErrNotFound
+	}
+	for _, env := range s.environments {
+		if env.ID == id {
+			return env, nil
+		}
 	}
 	return state.Environment{ID: id}, nil
 }
@@ -149,5 +158,24 @@ func TestReadOnlyStatus(t *testing.T) {
 		if w.Code != want {
 			t.Fatalf("%s: status %d, want %d", path, w.Code, want)
 		}
+	}
+}
+
+func TestEnvironmentAPIExcludesDiagnostics(t *testing.T) {
+	service := &stubService{environments: []state.Environment{{
+		ID:          "myproject:123",
+		Diagnostics: map[string]state.Diagnostic{"deployment-1": {Stage: state.BuildStage, Output: "operator-only excerpt"}},
+	}}}
+	handler := Handler(service, "shared-secret")
+	for _, path := range []string{"/api/environments", "/api/environments/myproject/123", "/api/deployments/deployment-1"} {
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK || strings.Contains(response.Body.String(), "diagnostics") ||
+			strings.Contains(response.Body.String(), "operator-only excerpt") {
+			t.Errorf("%s returned %d: %s", path, response.Code, response.Body.String())
+		}
+	}
+	if len(service.environments[0].Diagnostics) != 1 {
+		t.Fatal("API mutated the stored environment")
 	}
 }

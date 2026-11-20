@@ -229,7 +229,7 @@ func (s *Service) verify(project string, intent int64, id, repository, commit st
 		return
 	}
 	if err := s.verifier.Verify(s.ctx, repository, commit); err != nil {
-		if updateErr := s.update(project, intent, id, state.Failed, "commit verification failed: "+bounded(err.Error())); updateErr != nil {
+		if updateErr := s.recordFailure(project, intent, id, "commit verification failed: "+bounded(err.Error()), &state.Diagnostic{Stage: state.VerifyStage, Summary: "Could not verify the candidate commit."}); updateErr != nil {
 			slog.Error("record verification failure", "deployment", id, "error", updateErr)
 		}
 		return
@@ -257,7 +257,7 @@ func (s *Service) verify(project string, intent int64, id, repository, commit st
 		return s.updateWithResult(project, intent, id, status, "", &result)
 	})
 	if err != nil {
-		if updateErr := s.update(project, intent, id, state.Failed, "deployment failed: "+bounded(err.Error())); updateErr != nil {
+		if updateErr := s.recordFailure(project, intent, id, "deployment failed: "+bounded(err.Error()), result.Diagnostic); updateErr != nil {
 			slog.Error("record runtime failure", "deployment", id, "error", updateErr)
 		}
 		return
@@ -272,7 +272,7 @@ func (s *Service) verify(project string, intent int64, id, repository, commit st
 		if cleanupErr != nil {
 			message += "; cleanup: " + bounded(cleanupErr.Error())
 		}
-		if updateErr := s.update(project, intent, id, state.Failed, message); updateErr != nil {
+		if updateErr := s.recordFailure(project, intent, id, message, &state.Diagnostic{Stage: state.CutoverStage, Summary: "Could not activate the candidate."}); updateErr != nil {
 			slog.Error("record cutover failure", "deployment", id, "error", updateErr)
 		}
 		return
@@ -467,6 +467,10 @@ func (s *Service) update(project string, intent int64, id string, status state.S
 	return s.updateWithResult(project, intent, id, status, message, nil)
 }
 
+func (s *Service) recordFailure(project string, intent int64, id, message string, diagnostic *state.Diagnostic) error {
+	return s.updateWithResult(project, intent, id, state.Failed, message, &runtime.Result{Diagnostic: diagnostic})
+}
+
 func (s *Service) updateWithResult(project string, intent int64, id string, status state.Status, message string, result *runtime.Result) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -480,7 +484,17 @@ func (s *Service) updateWithResult(project string, intent int64, id string, stat
 			previous := env.Attempts[i].Status
 			env.Attempts[i].Status = status
 			env.Attempts[i].Error = message
-			if result != nil {
+			if result != nil && result.Diagnostic != nil {
+				diagnostic := *result.Diagnostic
+				if token := s.cfg.Token(); token != "" && strings.Contains(diagnostic.Output, token) {
+					diagnostic.Output = ""
+				}
+				if env.Diagnostics == nil {
+					env.Diagnostics = make(map[string]state.Diagnostic)
+				}
+				env.Diagnostics[id] = diagnostic
+			}
+			if result != nil && status != state.Failed {
 				env.Attempts[i].Port = result.Port
 				env.Attempts[i].Workspace = result.Workspace
 				env.Attempts[i].ComposeProject = result.ComposeProject

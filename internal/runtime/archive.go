@@ -82,7 +82,7 @@ func (r *Runtime) Restore(ctx context.Context, project string, intent int64, cfg
 		return 0, err
 	}
 	if err := r.probe(ctx, port, cfg.HealthPath); err != nil {
-		return 0, err
+		return 0, errStartupHealth
 	}
 	return port, nil
 }

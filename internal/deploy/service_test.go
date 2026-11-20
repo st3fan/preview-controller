@@ -65,6 +65,10 @@ func TestFailedCutoverKeepsPreviousTarget(t *testing.T) {
 			t.Fatal(err)
 		}
 		if len(env.Attempts) == 2 && env.Attempts[1].Status == state.Failed {
+			failure := env.Diagnostics[env.Attempts[1].ID]
+			if failure.Stage != state.CutoverStage || failure.Output != "" {
+				t.Fatalf("unexpected activation diagnostic: %+v", failure)
+			}
 			port, err := s.ActivePort("myproject", 9)
 			if err != nil || port != old.Port || env.ActiveCommit != old.Commit || !strings.Contains(env.Attempts[1].Error, "cutover") {
 				t.Fatalf("failed cutover state = %+v, port %d, error %v", env, port, err)

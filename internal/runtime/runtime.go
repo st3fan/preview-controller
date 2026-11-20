@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -30,6 +29,7 @@ type Result struct {
 	Port           int
 	Workspace      string
 	ComposeProject string
+	Diagnostic     *state.Diagnostic
 }
 
 type Progress func(state.Status, Result) error
@@ -75,6 +75,13 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 	defer cancel()
 	result.ComposeProject = projectNameForAttempt(attempt)
 	result.Workspace = filepath.Join(r.root, projectName, strconv.FormatInt(intent, 10), attempt.ID)
+	stage, summary := state.PrepareStage, "Could not prepare the deployment."
+	var outputExcerpt string
+	defer func() {
+		if err != nil {
+			result.Diagnostic = &state.Diagnostic{Stage: stage, Summary: summary, Output: outputExcerpt}
+		}
+	}()
 	checkout := filepath.Join(result.Workspace, "source")
 	if err := os.MkdirAll(result.Workspace, 0700); err != nil {
 		return result, err
@@ -132,22 +139,27 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 		return r.runDocker(ctx, limit, len(cfg.ComposeEnv) > 0 || len(cfg.ComposeEnvFrom) > 0, append(args, command...)...)
 	}
 	logger.Debug("rendering candidate Compose configuration")
-	output, err := runCompose(2<<20, "config", "--format", "json")
+	output, err := r.runDocker(ctx, 2<<20, true, append(args, "config", "--format", "json")...)
 	if err != nil {
 		return result, fmt.Errorf("resolve Compose configuration: %w", err)
 	}
 	if err := validateResolved([]byte(output), cfg.PublicService, targetPort, checkout); err != nil {
 		return result, fmt.Errorf("resolved Compose policy: %w", err)
 	}
+	confidential := len(cfg.ComposeEnv) > 0 || len(cfg.ComposeEnvFrom) > 0
+	stage, summary = state.BuildStage, "Docker Compose could not build the stack."
 	logger.Debug("building Compose stack")
-	if _, err := runCompose(2<<20, "build"); err != nil {
+	outputExcerpt, err = r.runComposeStep(ctx, confidential, append(args, "build")...)
+	if err != nil {
 		return result, fmt.Errorf("build Compose stack: %w", err)
 	}
 	if err := progress(state.Starting, result); err != nil {
 		return result, err
 	}
+	stage, summary = state.StartStage, "Docker Compose could not start the stack."
 	logger.Debug("starting Compose stack")
-	if _, err := runCompose(2<<20, "up", "-d", "--no-build", "--wait", "--wait-timeout", "180"); err != nil {
+	outputExcerpt, err = r.runComposeStep(ctx, confidential, append(args, "up", "-d", "--no-build", "--wait", "--wait-timeout", "180")...)
+	if err != nil {
 		return result, fmt.Errorf("start Compose stack: %w", err)
 	}
 	portText, err := runCompose(1024, "port", cfg.PublicService, strconv.Itoa(targetPort))
@@ -161,9 +173,11 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 	if err := progress(state.Starting, result); err != nil {
 		return result, err
 	}
+	stage = state.HealthStage
 	logger.Debug("probing public service", "port", result.Port)
 	if err := r.probe(ctx, result.Port, cfg.HealthPath); err != nil {
-		return result, err
+		summary = err.Error()
+		return result, errStartupHealth
 	}
 	return result, nil
 }
@@ -283,8 +297,7 @@ func (r *Runtime) docker(ctx context.Context, limit int, args ...string) (string
 }
 
 func (r *Runtime) runDocker(ctx context.Context, limit int, confidential bool, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "DOCKER_CONFIG=" + r.dockerConfig}
+	cmd := r.dockerCommand(ctx, args...)
 	output := cappedOutput{limit: limit}
 	stderr := cappedOutput{limit: limit}
 	cmd.Stdout, cmd.Stderr = &output, &stderr
@@ -302,16 +315,19 @@ func (r *Runtime) runDocker(ctx context.Context, limit int, confidential bool, a
 	return text, nil
 }
 
+var errStartupHealth = errors.New("public service did not pass its health probe")
+
 func (r *Runtime) probe(ctx context.Context, port int, path string) error {
 	deadline, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	for {
-		if err := r.ProbeHealth(deadline, port, path); err == nil {
+		err := r.ProbeHealth(deadline, port, path)
+		if err == nil {
 			return nil
 		}
 		select {
 		case <-deadline.Done():
-			return errors.New("public service did not pass its health probe")
+			return err
 		case <-time.After(2 * time.Second):
 		}
 	}
