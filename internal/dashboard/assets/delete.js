@@ -1,34 +1,38 @@
-const deletionStatus = document.getElementById("delete-status");
-let deleting = false;
+const actionStatus = document.getElementById("delete-status");
+let pending = false;
+const messages = {
+  delete: ["Deleting", "Deleted"],
+  archive: ["Archiving", "Archived"],
+  restore: ["Restoring", "Restored"],
+};
 
 document.addEventListener("click", async (event) => {
-  const button = event.target.closest("button[data-delete-url]");
-  if (!button || deleting) return;
+  const button = event.target.closest("button[data-delete-url], button[data-action-url]");
+  if (!button || pending) return;
 
   const preview = button.dataset.preview;
-  if (!window.confirm(`Delete ${preview}? This permanently removes the preview and its deployment history.`)) {
+  const action = button.dataset.action ?? "delete";
+  if (action === "delete" && !window.confirm(`Delete ${preview}? This permanently removes the preview and its deployment history.`)) {
     return;
   }
 
-  deleting = true;
+  pending = true;
   button.disabled = true;
-  deletionStatus.textContent = `Deleting ${preview}…`;
+  actionStatus.textContent = `${messages[action][0]} ${preview}…`;
   try {
-    const response = await fetch(button.dataset.deleteUrl, {
+    const response = await fetch(button.dataset.actionUrl ?? button.dataset.deleteUrl, {
       method: "POST",
-      headers: {"X-Preview-Action": "delete"},
+      headers: {"X-Preview-Action": action},
       mode: "same-origin",
       redirect: "error",
     });
-    if (response.ok) {
-      deletionStatus.textContent = `Deleted ${preview}.`;
-    } else {
-      deletionStatus.textContent = (await response.text()).trim();
-    }
+    actionStatus.textContent = response.ok
+      ? `${messages[action][1]} ${preview}.`
+      : (await response.text()).trim();
   } catch {
-    deletionStatus.textContent = `Could not confirm deletion of ${preview}. Check the dashboard and retry if the preview is still listed.`;
+    actionStatus.textContent = `Could not confirm the change to ${preview}. Check the dashboard and try again if needed.`;
   } finally {
     button.disabled = false;
-    deleting = false;
+    pending = false;
   }
 });

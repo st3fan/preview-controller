@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,7 +36,7 @@ func TestComposeCandidateLifecycle(t *testing.T) {
 	}
 	files := map[string]string{
 		"Dockerfile":           "FROM python:3.12-alpine\nCMD [\"python\", \"-m\", \"http.server\", \"8080\"]\n",
-		"compose.preview.yaml": "services:\n  web:\n    build: .\n    depends_on:\n      db:\n        condition: service_healthy\n  db:\n    image: redis:7-alpine\n    healthcheck:\n      test: [CMD, redis-cli, ping]\n",
+		"compose.preview.yaml": "services:\n  web:\n    build: .\n    restart: always\n    stop_grace_period: 1s\n    depends_on:\n      db:\n        condition: service_healthy\n  db:\n    image: redis:7-alpine\n    volumes: [redis-data:/data]\n    healthcheck:\n      test: [CMD, redis-cli, ping]\n      interval: 1s\nvolumes:\n  redis-data: {}\n",
 	}
 	worktree, err := repo.Worktree()
 	if err != nil {
@@ -80,6 +81,41 @@ func TestComposeCandidateLifecycle(t *testing.T) {
 	if err != nil || !alive {
 		t.Fatalf("healthy candidate check = %v, %v", alive, err)
 	}
+	redis := func(command ...string) (string, error) {
+		return runner.docker(ctx, 1024, append([]string{"exec", result.ComposeProject + "-db-1", "redis-cli"}, command...)...)
+	}
+	if output, err := redis("SET", "archive-test", "saved"); err != nil || strings.TrimSpace(output) != "OK" {
+		t.Fatalf("write preview data = %q, %v", output, err)
+	}
+	if err := runner.Stop(ctx, attempt); err != nil {
+		t.Fatal(err)
+	}
+	if alive, err := runner.Check(ctx, attempt, project); err != nil || alive {
+		t.Fatalf("archived stack check = %v, %v", alive, err)
+	}
+	port, err := runner.Restore(ctx, "fixture", 1, project, attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt.Port = port
+	if alive, err := runner.Check(ctx, attempt, project); err != nil || !alive {
+		t.Fatalf("restored stack check = %v, %v", alive, err)
+	}
+	if value, err := redis("GET", "archive-test"); err != nil || strings.TrimSpace(value) != "saved" {
+		t.Fatalf("restored preview data = %q, %v", value, err)
+	}
+	image := result.ComposeProject + "-web:latest"
+	label, err := runner.docker(ctx, 1024, "image", "inspect", "--format", "{{index .Config.Labels \"com.docker.compose.project\"}}", image)
+	if err != nil || strings.TrimSpace(label) != result.ComposeProject {
+		t.Fatalf("build image ownership = %q, %v", label, err)
+	}
+	if err := runner.Cleanup(ctx, "fixture", 1, attempt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runner.docker(ctx, 1024, "image", "inspect", image); err == nil {
+		t.Fatal("preview build image survived cleanup")
+	}
+
 }
 
 // This test renders Compose configuration without starting containers.

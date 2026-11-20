@@ -90,3 +90,26 @@ func TestValidateRejectsUnsafeSettings(t *testing.T) {
 		})
 	}
 }
+
+func TestLifecycleSettings(t *testing.T) {
+	cfg := Config{Projects: map[string]Project{"demo": {DeleteAfterArchive: "12h"}}}
+	if archive, retention := cfg.Lifecycle("demo"); archive.Hours() != 168 || retention.Hours() != 12 {
+		t.Fatalf("archive = %v, retention = %v", archive, retention)
+	}
+	cfg.ArchiveAfterIdle = "24h"
+	cfg.DeleteAfterArchive = "48h"
+	if archive, retention := cfg.Lifecycle("demo"); archive.Hours() != 24 || retention.Hours() != 12 {
+		t.Fatalf("archive = %v, retention = %v", archive, retention)
+	}
+	if archive, retention := cfg.Lifecycle("other"); archive.Hours() != 24 || retention.Hours() != 48 {
+		t.Fatalf("archive = %v, retention = %v", archive, retention)
+	}
+	for _, value := range []string{"0s", "-1h", "one week"} {
+		if err := (Config{ArchiveAfterIdle: value}).Validate(); err == nil || !strings.Contains(err.Error(), "archive_after_idle") {
+			t.Fatalf("global validation for %q = %v", value, err)
+		}
+		if err := (Project{DeleteAfterArchive: value}).Validate(); err == nil || !strings.Contains(err.Error(), "delete_after_archive") {
+			t.Fatalf("project validation for %q = %v", value, err)
+		}
+	}
+}

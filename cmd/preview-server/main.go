@@ -59,6 +59,7 @@ func run(settings string) error {
 	dashboard.Register(managementMux, ctx, cfg.Projects, service.ListEnvironments, store.Changes)
 	dashboard.RegisterLogs(managementMux, ctx, store.Load, runner.OpenLogs)
 	dashboard.RegisterDelete(managementMux, service.DeleteEnvironment)
+	dashboard.RegisterArchive(managementMux, service.ArchiveEnvironment, service.RestoreEnvironment)
 	managementMux.Handle("/", api.Handler(service, cfg.Token()))
 	management := &http.Server{
 		Addr:              cfg.ManagementListen,

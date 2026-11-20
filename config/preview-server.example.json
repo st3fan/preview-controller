@@ -5,6 +5,8 @@
   "state_root": "/var/lib/preview-server",
   "workspace_root": "/srv/preview-server",
   "deployment_token_env": "PREVIEW_SERVER_TOKEN",
+  "archive_after_idle": "168h",
+  "delete_after_archive": "168h",
   "projects": {
     "myproject": {
       "repository": "https://github.com/example/myproject.git",

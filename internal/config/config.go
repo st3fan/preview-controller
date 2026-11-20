@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const DefaultPath = "/etc/preview-server.json"
@@ -25,6 +26,8 @@ var (
 
 // Config contains operator settings. Deployment state is stored separately.
 type Config struct {
+	ArchiveAfterIdle   string             `json:"archive_after_idle,omitempty"`
+	DeleteAfterArchive string             `json:"delete_after_archive,omitempty"`
 	DashboardOrigin    string             `json:"dashboard_origin,omitempty"`
 	ManagementListen   string             `json:"management_listen"`
 	PreviewListen      string             `json:"preview_listen"`
@@ -37,14 +40,16 @@ type Config struct {
 }
 
 type Project struct {
-	PreviewInspector bool              `json:"preview_inspector,omitempty"`
-	Repository       string            `json:"repository"`
-	ComposeFile      string            `json:"compose_file"`
-	PublicService    string            `json:"public_service"`
-	PublicPort       int               `json:"public_port"`
-	HealthPath       string            `json:"health_path"`
-	ComposeEnv       map[string]string `json:"compose_env,omitempty"`
-	ComposeEnvFrom   map[string]string `json:"compose_env_from,omitempty"`
+	ArchiveAfterIdle   string            `json:"archive_after_idle,omitempty"`
+	DeleteAfterArchive string            `json:"delete_after_archive,omitempty"`
+	PreviewInspector   bool              `json:"preview_inspector,omitempty"`
+	Repository         string            `json:"repository"`
+	ComposeFile        string            `json:"compose_file"`
+	PublicService      string            `json:"public_service"`
+	PublicPort         int               `json:"public_port"`
+	HealthPath         string            `json:"health_path"`
+	ComposeEnv         map[string]string `json:"compose_env,omitempty"`
+	ComposeEnvFrom     map[string]string `json:"compose_env_from,omitempty"`
 }
 
 func Load(filename string) (Config, error) {
@@ -82,6 +87,9 @@ func Load(filename string) (Config, error) {
 func (c Config) Token() string { return c.token }
 
 func (c Config) Validate() error {
+	if err := validateLifecycle(c.ArchiveAfterIdle, c.DeleteAfterArchive); err != nil {
+		return err
+	}
 	if c.DashboardOrigin != "" {
 		origin, err := url.Parse(c.DashboardOrigin)
 		if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") ||
@@ -146,6 +154,9 @@ func validateListener(address, name string) error {
 }
 
 func (p Project) Validate() error {
+	if err := validateLifecycle(p.ArchiveAfterIdle, p.DeleteAfterArchive); err != nil {
+		return err
+	}
 	u, err := url.Parse(p.Repository)
 	if err != nil || u.Scheme != "https" || u.Host != "github.com" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return errors.New("repository must be a public https://github.com/owner/repo URL")
@@ -221,4 +232,35 @@ func validateDomain(domain string) error {
 
 func pathIsAbsolute(name string) bool {
 	return strings.HasPrefix(name, "/") && path.Clean(name) == name
+}
+
+func validateLifecycle(archive, remove string) error {
+	for _, setting := range []struct{ name, value string }{
+		{"archive_after_idle", archive}, {"delete_after_archive", remove},
+	} {
+		if setting.value == "" {
+			continue
+		}
+		duration, err := time.ParseDuration(setting.value)
+		if err != nil || duration <= 0 {
+			return fmt.Errorf("%s must be a positive duration such as 168h", setting.name)
+		}
+	}
+	return nil
+}
+
+// Lifecycle returns the effective archive and retention intervals.
+func (c Config) Lifecycle(project string) (archive, retention time.Duration) {
+	p := c.Projects[project]
+	return lifecycleDuration(p.ArchiveAfterIdle, c.ArchiveAfterIdle),
+		lifecycleDuration(p.DeleteAfterArchive, c.DeleteAfterArchive)
+}
+
+func lifecycleDuration(override, global string) time.Duration {
+	for _, value := range []string{override, global} {
+		if duration, err := time.ParseDuration(value); err == nil && duration > 0 {
+			return duration
+		}
+	}
+	return 7 * 24 * time.Hour
 }
