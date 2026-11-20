@@ -8,6 +8,8 @@ stack. When the new stack passes health checks, its stable preview URL switches
 to the new loopback port. The previous stack stays available if the candidate
 fails.
 
+For a prebuilt image, see [Portainer installation](docs/installation.md#portainer-with-a-published-image).
+
 ## Run with Docker Compose
 
 Use a dedicated Linux host with rootful Docker Engine and the Docker Compose

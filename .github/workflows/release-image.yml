@@ -1,0 +1,129 @@
+name: Publish release image
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/st3fan/preview-controller
+
+jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: checks
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    concurrency:
+      group: publish-release-image
+      queue: max
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate release version
+        id: version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          python3 .github/release-version.py
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        id: metadata
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: type=raw,value=${{ steps.version.outputs.tag }}
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        id: build
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          labels: ${{ steps.metadata.outputs.labels }}
+          tags: ${{ steps.metadata.outputs.tags }}
+      - name: Update latest for the highest stable release
+        if: steps.version.outputs.stable == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/releases.json"
+          newest=$(python3 .github/release-version.py "$RUNNER_TEMP/releases.json")
+          if [[ "$RELEASE_TAG" == "$newest" ]]; then
+            docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE@$DIGEST"
+            actual=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "$IMAGE:latest")
+            test "$actual" = "$DIGEST"
+          fi
+      - name: Record image index digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          printf 'Version image: `%s:%s`\n\nPin in Portainer: `%s@%s`\n' \
+            "$IMAGE" "$IMAGE_TAG" "$IMAGE" "$DIGEST" >> "$GITHUB_STEP_SUMMARY"
+
+  verify:
+    name: Verify anonymous pull and startup (${{ matrix.arch }})
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pull anonymously and start the Portainer stack
+        env:
+          DIGEST: ${{ needs.publish.outputs.digest }}
+          IMAGE_TAG: ${{ needs.publish.outputs.tag }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          export DOCKER_CONFIG="$(mktemp -d)"
+          export PREVIEW_SERVER_IMAGE="$IMAGE@$DIGEST"
+          export PREVIEW_SERVER_CONFIG="$PWD/config/preview-server.example.json"
+          export PREVIEW_SERVER_WORKSPACE=/srv/preview-server
+          export PREVIEW_SERVER_TOKEN=release-smoke-test
+          sudo install -d -m 0700 "$PREVIEW_SERVER_WORKSPACE"
+
+          docker pull --platform "linux/$ARCH" "$IMAGE:$IMAGE_TAG"
+          docker pull --platform "linux/$ARCH" "$PREVIEW_SERVER_IMAGE"
+          test "$(docker image inspect --format '{{.Id}}' "$IMAGE:$IMAGE_TAG")" = \
+            "$(docker image inspect --format '{{.Id}}' "$PREVIEW_SERVER_IMAGE")"
+          docker compose -f compose.portainer.yaml up -d --pull never
+          curl --fail --silent --show-error --retry 15 --retry-connrefused \
+            --retry-delay 1 --max-time 5 http://127.0.0.1:8080/healthz
+          docker compose -f compose.portainer.yaml exec -T controller docker version
+          docker compose -f compose.portainer.yaml exec -T controller docker compose version
+      - name: Show logs and clean up
+        if: always()
+        env:
+          DIGEST: ${{ needs.publish.outputs.digest }}
+          PREVIEW_SERVER_TOKEN: release-smoke-test
+        run: |
+          export PREVIEW_SERVER_IMAGE="$IMAGE@$DIGEST"
+          export PREVIEW_SERVER_CONFIG="$PWD/config/preview-server.example.json"
+          docker compose -f compose.portainer.yaml logs controller
+          docker compose -f compose.portainer.yaml down --volumes
