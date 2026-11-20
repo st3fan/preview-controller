@@ -1,0 +1,84 @@
+package dashboard
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"net/http"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/st3fan/preview-controller/internal/config"
+	"github.com/st3fan/preview-controller/internal/state"
+)
+
+type detailAttempt struct {
+	state.Attempt
+	LiveLogs bool
+}
+
+type detailView struct {
+	state.Environment
+	IssueURL   string
+	IssueTitle string
+	Active     *detailAttempt
+	Recent     []detailAttempt
+}
+
+func liveLogsAvailable(env state.Environment) bool {
+	return !env.Deleting && env.DeleteAt == nil && env.LifecycleOperation == ""
+}
+
+func RegisterDetail(mux *http.ServeMux, cfg config.Config, load func(string, int64) (state.Environment, error)) {
+	mux.HandleFunc("GET /dashboard/previews/{project}/{intent}", func(w http.ResponseWriter, r *http.Request) {
+		project := r.PathValue("project")
+		intent, err := strconv.ParseInt(r.PathValue("intent"), 10, 64)
+		if err != nil || intent < 1 {
+			http.NotFound(w, r)
+			return
+		}
+		env, err := load(project, intent)
+		if errors.Is(err, state.ErrNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		if err != nil {
+			http.Error(w, "Could not load preview", http.StatusServiceUnavailable)
+			return
+		}
+		data := detailView{Environment: env}
+		if projectConfig, ok := cfg.Projects[project]; ok {
+			repository := strings.TrimSuffix(strings.TrimRight(projectConfig.Repository, "/"), ".git")
+			data.IssueURL = fmt.Sprintf("%s/issues/%d", repository, intent)
+			if url, err := cfg.URL(project, intent); err == nil {
+				data.URL = url
+			}
+		}
+		for _, attempt := range slices.Backward(env.Attempts) {
+			item := detailAttempt{Attempt: attempt, LiveLogs: liveLogsAvailable(env) && hasLogs(attempt)}
+			if data.IssueTitle == "" {
+				data.IssueTitle = attempt.IssueTitle
+			}
+			if env.ActiveDeploymentID != "" && attempt.ID == env.ActiveDeploymentID {
+				data.Active = &item
+			}
+			if len(data.Recent) < 10 {
+				data.Recent = append(data.Recent, item)
+			}
+		}
+		var page bytes.Buffer
+		if err := templates.ExecuteTemplate(&page, "detail", data); err != nil {
+			http.Error(w, "Could not render preview", http.StatusInternalServerError)
+			return
+		}
+		setPageHeaders(w)
+		_, _ = w.Write(page.Bytes())
+	})
+}
+
+func setPageHeaders(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'; base-uri 'none'; frame-ancestors 'none'")
+}

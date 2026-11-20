@@ -72,7 +72,7 @@ func TestDashboard(t *testing.T) {
 		t.Fatal(err)
 	}
 	event := readEvent(t, events)
-	requireText(t, event, "<h2>alpha</h2>", "#18 Fix &lt;preview&gt; &amp; routing", env.URL, active, ">Unknown<", ">failed<", `href="/dashboard/logs/alpha/18/deployment-0123456789abcdef0123456789abcdef" target="_blank" rel="noopener">Live logs`)
+	requireText(t, event, "<h2>alpha</h2>", "#18 Fix &lt;preview&gt; &amp; routing", env.URL, "/dashboard/previews/alpha/18", active, ">Unknown<", ">failed<", `href="/dashboard/logs/alpha/18/deployment-0123456789abcdef0123456789abcdef" target="_blank" rel="noopener">Live logs`)
 
 	// A probe result updates the stream without any deployment state write.
 	go monitor.Run(shutdown)
