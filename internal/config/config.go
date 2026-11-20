@@ -28,6 +28,7 @@ type Config struct {
 	ManagementListen   string             `json:"management_listen"`
 	PreviewDomain      string             `json:"preview_domain"`
 	StateRoot          string             `json:"state_root"`
+	WorkspaceRoot      string             `json:"workspace_root"`
 	DeploymentTokenEnv string             `json:"deployment_token_env"`
 	Projects           map[string]Project `json:"projects"`
 	token              string
@@ -93,6 +94,12 @@ func (c Config) Validate() error {
 	}
 	if !pathIsAbsolute(c.StateRoot) {
 		return errors.New("state_root must be an absolute path")
+	}
+	if !pathIsAbsolute(c.WorkspaceRoot) {
+		return errors.New("workspace_root must be an absolute path")
+	}
+	if c.StateRoot == c.WorkspaceRoot || strings.HasPrefix(c.StateRoot, c.WorkspaceRoot+"/") || strings.HasPrefix(c.WorkspaceRoot, c.StateRoot+"/") {
+		return errors.New("state_root and workspace_root must be separate directories")
 	}
 	if !envName.MatchString(c.DeploymentTokenEnv) {
 		return errors.New("deployment_token_env must name an environment variable")

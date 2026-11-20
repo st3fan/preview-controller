@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/st3fan/preview-controller/internal/config"
+	"github.com/st3fan/preview-controller/internal/runtime"
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
@@ -32,10 +33,17 @@ type Verifier interface {
 	Verify(context.Context, string, string) error
 }
 
+type Runner interface {
+	Run(context.Context, string, int64, config.Project, state.Attempt, runtime.Progress) (runtime.Result, error)
+	Cleanup(context.Context, string, int64, state.Attempt) error
+	Check(context.Context, state.Attempt, config.Project) (bool, error)
+}
+
 type Service struct {
 	cfg      config.Config
 	store    *state.Store
 	verifier Verifier
+	runner   Runner
 	mu       sync.Mutex
 	sem      chan struct{}
 	ctx      context.Context
@@ -44,12 +52,15 @@ type Service struct {
 	closed   bool
 }
 
-func New(cfg config.Config, store *state.Store, verifier Verifier) (*Service, error) {
+func New(cfg config.Config, store *state.Store, verifier Verifier, runners ...Runner) (*Service, error) {
 	if store == nil || verifier == nil {
 		return nil, errors.New("state store and verifier are required")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Service{cfg: cfg, store: store, verifier: verifier, sem: make(chan struct{}, 4), ctx: ctx, cancel: cancel}
+	if len(runners) > 0 {
+		s.runner = runners[0]
+	}
 	if err := s.reconcile(); err != nil {
 		cancel()
 		return nil, err
@@ -181,10 +192,42 @@ func (s *Service) verify(project string, intent int64, id, repository, commit st
 	}
 	if err := s.update(project, intent, id, state.Verified, ""); err != nil {
 		slog.Error("record verified state", "deployment", id, "error", err)
+		return
+	}
+	if s.runner == nil {
+		return
+	}
+	env, err := s.store.Load(project, intent)
+	if err != nil {
+		slog.Error("load candidate for runtime", "deployment", id, "error", err)
+		return
+	}
+	var candidate state.Attempt
+	for _, item := range env.Attempts {
+		if item.ID == id {
+			candidate = item
+			break
+		}
+	}
+	result, err := s.runner.Run(s.ctx, project, intent, s.cfg.Projects[project], candidate, func(status state.Status, result runtime.Result) error {
+		return s.updateWithResult(project, intent, id, status, "", &result)
+	})
+	if err != nil {
+		if updateErr := s.update(project, intent, id, state.Failed, "deployment failed: "+bounded(err.Error())); updateErr != nil {
+			slog.Error("record runtime failure", "deployment", id, "error", updateErr)
+		}
+		return
+	}
+	if err := s.updateWithResult(project, intent, id, state.Healthy, "", &result); err != nil {
+		slog.Error("record healthy candidate", "deployment", id, "error", err)
 	}
 }
 
 func (s *Service) update(project string, intent int64, id string, status state.Status, message string) error {
+	return s.updateWithResult(project, intent, id, status, message, nil)
+}
+
+func (s *Service) updateWithResult(project string, intent int64, id string, status state.Status, message string, result *runtime.Result) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	env, err := s.store.Load(project, intent)
@@ -196,6 +239,11 @@ func (s *Service) update(project string, intent int64, id string, status state.S
 			now := time.Now().UTC()
 			env.Attempts[i].Status = status
 			env.Attempts[i].Error = message
+			if result != nil {
+				env.Attempts[i].Port = result.Port
+				env.Attempts[i].Workspace = result.Workspace
+				env.Attempts[i].ComposeProject = result.ComposeProject
+			}
 			env.Attempts[i].UpdatedAt = now
 			env.UpdatedAt = now
 			return s.store.Save(env)
@@ -212,10 +260,35 @@ func (s *Service) reconcile() error {
 	for _, env := range envs {
 		changed := false
 		for i := range env.Attempts {
+			if env.Attempts[i].Status == state.Healthy && s.runner != nil {
+				if projectCfg, ok := s.cfg.Projects[env.Project]; ok {
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					alive, err := s.runner.Check(ctx, env.Attempts[i], projectCfg)
+					cancel()
+					if err != nil {
+						slog.Error("inspect previous runtime", "deployment", env.Attempts[i].ID, "error", err)
+					} else if !alive {
+						now := time.Now().UTC()
+						env.Attempts[i].Status = state.Failed
+						env.Attempts[i].Error = "runtime was not healthy after controller restart"
+						env.Attempts[i].UpdatedAt = now
+						env.UpdatedAt = now
+						changed = true
+					}
+				}
+			}
 			if inProgress(env.Attempts[i].Status) {
+				message := "controller restarted before deployment completed"
+				if s.runner != nil {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+					if err := s.runner.Cleanup(ctx, env.Project, env.Intent, env.Attempts[i]); err != nil {
+						message += "; cleanup: " + bounded(err.Error())
+					}
+					cancel()
+				}
 				now := time.Now().UTC()
 				env.Attempts[i].Status = state.Failed
-				env.Attempts[i].Error = "controller restarted before deployment completed"
+				env.Attempts[i].Error = message
 				env.Attempts[i].UpdatedAt = now
 				env.UpdatedAt = now
 				changed = true

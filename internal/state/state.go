@@ -28,13 +28,15 @@ const (
 )
 
 type Attempt struct {
-	ID        string    `json:"id"`
-	Commit    string    `json:"commit"`
-	Status    Status    `json:"status"`
-	Port      int       `json:"port,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             string    `json:"id"`
+	Commit         string    `json:"commit"`
+	Status         Status    `json:"status"`
+	Port           int       `json:"port,omitempty"`
+	Workspace      string    `json:"workspace,omitempty"`
+	ComposeProject string    `json:"compose_project,omitempty"`
+	Error          string    `json:"error,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type Environment struct {

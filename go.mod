@@ -2,7 +2,10 @@ module github.com/st3fan/preview-controller
 
 go 1.27.3
 
-require github.com/go-git/go-git/v6 v6.0.0-beta.1
+require (
+	github.com/go-git/go-git/v6 v6.0.0-beta.1
+	gopkg.in/yaml.v3 v3.0.1
+)
 
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect

@@ -2,6 +2,7 @@
   "management_listen": "127.0.0.1:8080",
   "preview_domain": "preview.example.com",
   "state_root": "/var/lib/preview-server",
+  "workspace_root": "/srv/preview-server",
   "deployment_token_env": "PREVIEW_SERVER_TOKEN",
   "projects": {
     "myproject": {
