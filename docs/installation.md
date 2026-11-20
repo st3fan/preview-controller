@@ -6,13 +6,15 @@ Do not place unrelated workloads or secrets on this host.
 
 ## Prerequisites
 
-- Go 1.27 or newer on the build machine, Docker Engine and Docker Compose on
-  the Linux host, and outbound HTTPS access to public GitHub repositories.
+- Docker Engine and Docker Compose on the Linux host, and outbound HTTPS
+  access to public GitHub repositories. The native build also needs Go 1.27 or newer.
 - Wildcard DNS for `*.preview.example.com` pointing at Caddy and a wildcard TLS
   certificate or Caddy DNS challenge setup. A wildcard covers the flat
   `<project>-<intent>.preview.example.com` hostname.
-- A dedicated service account that can access the Docker daemon. Membership in
+- For systemd, a dedicated service account that can access the Docker daemon. Membership in
   the `docker` group grants powerful host access; restrict it to this host.
+
+## Native executable and systemd
 
 From the repository checkout, build with
 `GOOS=linux CGO_ENABLED=0 go build -o preview-server ./cmd/preview-server`
@@ -52,6 +54,53 @@ ProtectHome=true
 [Install]
 WantedBy=multi-user.target
 ```
+
+## Docker Compose
+
+Run the shipped Compose definition from the repository checkout on the Linux
+preview host. It builds the controller image locally. Copy the
+[example JSON](../config/preview-server.example.json) to
+`/etc/preview-server.json` and configure your project allowlist and preview
+domain. Keep these settings for the shipped definition:
+
+- `state_root` is `/var/lib/preview-server`, backed by the Compose `state` volume.
+- `workspace_root` is `/srv/preview-server`. Create this as a real directory on
+  the host. The controller runs as root in the shipped image, so use
+  `sudo install -d -o root -g root -m 0700 /srv/preview-server` for a new workspace.
+- `deployment_token_env` is `PREVIEW_SERVER_TOKEN`.
+
+To use a different config file, export `PREVIEW_SERVER_CONFIG` with its absolute
+host path. To use a different workspace, export `PREVIEW_SERVER_WORKSPACE` with
+the same absolute path as `workspace_root`. The host daemon resolves preview bind
+mounts using that path, so use a dedicated host directory with no symlink
+components. Keep the state and workspace paths separate.
+
+Load the deployment token into the shell environment before starting the service.
+For an interactive Bash session:
+
+```bash
+read -rsp 'Deployment token: ' PREVIEW_SERVER_TOKEN
+export PREVIEW_SERVER_TOKEN
+docker compose up -d --build
+unset PREVIEW_SERVER_TOKEN
+```
+
+Supply the same token when recreating the service. Any variables referenced by
+`compose_env_from` also need to be passed through the controller service environment.
+Treat access to Docker as access to the controller's environment and credentials.
+
+The controller uses host networking to reach preview ports on the host's loopback
+interface. Keep both JSON listeners on loopback when Caddy runs on the same host.
+The controller service mounts the rootful host Docker socket, which grants
+host-level control. Preview services still use the controller's restricted Compose
+policy and run as separate projects.
+
+Keep the same Compose project name across upgrades so the controller reuses its
+state volume. Remove active previews through the management API before uninstalling.
+Stopping the controller leaves preview projects running, and removing the named
+state volume discards the controller's deployment records.
+
+## Caddy and preview ingress
 
 The operator configures Caddy once. With a previously provisioned wildcard
 certificate, a Caddyfile route can be:

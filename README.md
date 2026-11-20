@@ -10,6 +10,9 @@ fails.
 
 ## Build and run
 
+Use the [Docker Compose installation](docs/installation.md#docker-compose)
+or run the controller as a native executable.
+
 Use Go 1.27 or newer. Build a Linux executable with CGO disabled; set
 `GOARCH` to the preview host's architecture when cross-compiling:
 
