@@ -1,6 +1,9 @@
 services:
   controller:
-    build: .
+    build:
+      context: .
+      args:
+        CONTROLLER_REVISION: ${PREVIEW_CONTROLLER_REVISION:-}
     restart: unless-stopped
     network_mode: host
     environment:

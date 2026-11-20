@@ -8,7 +8,6 @@ import (
 	"html/template"
 	"io"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -18,12 +17,14 @@ import (
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
-//go:embed dashboard.html detail.html assets
+//go:embed *.html assets
 var files embed.FS
 
-var templates = template.Must(template.ParseFS(files, "dashboard.html", "detail.html"))
-
-var commitSHA = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+var templates = template.Must(template.New("pages").Funcs(template.FuncMap{
+	"controllerBuild": controllerBuild,
+	"outcome":         attemptOutcome,
+	"isFragment":      func(url string) bool { return strings.HasPrefix(url, "#") },
+}).ParseFS(files, "*.html"))
 
 type environment struct {
 	Project        string
@@ -39,7 +40,8 @@ type environment struct {
 	Commit         string
 	ShortCommit    string
 	CommitURL      string
-	Status         state.Status
+	Operation      string
+	Latest         *state.Attempt
 	Health         health.Observation
 	Logs           []state.Attempt
 }
@@ -50,9 +52,20 @@ type project struct {
 }
 
 type view struct {
-	Unavailable bool
-	Projects    []project
-	Archived    []environment
+	Unavailable   bool
+	Projects      []project
+	Archived      []project
+	LiveCount     int
+	ArchivedCount int
+}
+
+func appendEnvironment(groups []project, row environment) []project {
+	if len(groups) == 0 || groups[len(groups)-1].Name != row.Project {
+		groups = append(groups, project{Name: row.Project})
+	}
+	group := &groups[len(groups)-1]
+	group.Environments = append(group.Environments, row)
+	return groups
 }
 
 func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]config.Project, list func() ([]state.Environment, error), changes func() <-chan struct{}, monitor *health.Monitor) {
@@ -67,8 +80,8 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 				Project:        env.Project,
 				Health:         monitor.Lookup(env),
 				Archived:       env.DeleteAt != nil,
-				CanArchive:     !env.Deleting && env.DeleteAt == nil && env.ActiveDeploymentID != "",
-				CanRestore:     !env.Deleting && env.DeleteAt != nil,
+				CanArchive:     liveActionsAvailable(env) && env.ActiveDeploymentID != "",
+				CanRestore:     !env.Deleting && env.DeleteAt != nil && env.LifecycleOperation == "",
 				Deadline:       env.ArchiveAt,
 				LifecycleError: env.LifecycleError,
 				Intent:         env.Intent, URL: env.URL, Commit: env.ActiveCommit,
@@ -78,12 +91,12 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 				// Configuration has already validated the repository as a GitHub HTTPS URL.
 				repository := strings.TrimSuffix(strings.TrimRight(project.Repository, "/"), ".git")
 				row.IntentURL = fmt.Sprintf("%s/issues/%d", repository, env.Intent)
-				if commitSHA.MatchString(env.ActiveCommit) {
+				if commitOID(env.ActiveCommit) {
 					row.CommitURL = repository + "/commit/" + env.ActiveCommit
 				}
 			}
 			if len(env.Attempts) > 0 {
-				row.Status = env.Attempts[len(env.Attempts)-1].Status
+				row.Latest = &env.Attempts[len(env.Attempts)-1]
 			}
 			for _, attempt := range slices.Backward(env.Attempts) {
 				if attempt.IssueTitle != "" {
@@ -91,30 +104,25 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 					break
 				}
 			}
-			if liveLogsAvailable(env) {
+			if liveActionsAvailable(env) {
 				for _, attempt := range env.Attempts {
 					if hasLogs(attempt) {
 						row.Logs = append(row.Logs, attempt)
 					}
 				}
 			}
+			row.Operation = env.LifecycleOperation
 			if env.Deleting {
-				row.Status = "deleting"
-			} else if env.LifecycleOperation != "" {
-				row.Status = state.Status(env.LifecycleOperation)
-			} else if row.Archived {
-				row.Status = "archived"
+				row.Operation = "deleting"
 			}
 			if row.Archived {
 				row.Deadline = env.DeleteAt
-				data.Archived = append(data.Archived, row)
-				continue
+				data.Archived = appendEnvironment(data.Archived, row)
+				data.ArchivedCount++
+			} else {
+				data.Projects = appendEnvironment(data.Projects, row)
+				data.LiveCount++
 			}
-			if len(data.Projects) == 0 || data.Projects[len(data.Projects)-1].Name != env.Project {
-				data.Projects = append(data.Projects, project{Name: env.Project})
-			}
-			group := &data.Projects[len(data.Projects)-1]
-			group.Environments = append(group.Environments, row)
 		}
 		return data
 	}
@@ -138,7 +146,7 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 		}
 		stream(w, r, shutdown, load, changes, monitor.Changes)
 	})
-	for _, name := range []string{"htmx-2.0.11.min.js", "sse-2.2.4.js", "dashboard.css", "theme.js", "delete.js", "trash.svg"} {
+	for _, name := range []string{"htmx-2.0.11.min.js", "sse-2.2.4.js", "dashboard.css", "theme.js", "delete.js", "trash.svg", "icons.svg", "bootstrap-reboot-5.3.8.min.css"} {
 		mux.HandleFunc("GET /dashboard/assets/"+name, func(w http.ResponseWriter, r *http.Request) {
 			http.ServeFileFS(w, r, files, "assets/"+name)
 		})

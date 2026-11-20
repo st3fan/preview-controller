@@ -1,30 +1,42 @@
 (() => {
-  const storageKey = "preview-dashboard-theme";
-  const root = document.documentElement;
-
+  const key = "preview-dashboard-theme";
+  const modes = ["light", "dark", "system"];
+  const icons = {light: "sun", dark: "moon", system: "display"};
+  const system = window.matchMedia("(prefers-color-scheme: dark)");
+  let mode = "system";
   try {
-    if (localStorage.getItem(storageKey) === "dark") {
-      root.dataset.theme = "dark";
-    }
+    const saved = localStorage.getItem(key);
+    if (modes.includes(saved)) mode = saved;
   } catch {
-    // The toggle still works for this page when storage is unavailable.
+    // Storage may be unavailable on this device.
   }
 
+  function nextMode() {
+    return modes[(modes.indexOf(mode) + 1) % modes.length];
+  }
+
+  function apply() {
+    document.documentElement.dataset.theme = mode === "system"
+      ? (system.matches ? "dark" : "light") : mode;
+    const button = document.getElementById("theme-toggle");
+    if (!button) return;
+    button.title = `Color theme: ${mode}. Switch to ${nextMode()} mode.`;
+    button.setAttribute("aria-label", button.title);
+    button.querySelector("use").setAttribute("href", "/dashboard/assets/icons.svg#icon-" + icons[mode]);
+    button.hidden = false;
+  }
+
+  apply();
+  system.addEventListener("change", apply);
   document.addEventListener("DOMContentLoaded", () => {
-    const toggle = document.getElementById("theme-toggle");
-    toggle.setAttribute("aria-pressed", String(root.dataset.theme === "dark"));
-    toggle.hidden = false;
-
-    toggle.addEventListener("click", () => {
-      const dark = root.dataset.theme !== "dark";
-      const theme = dark ? "dark" : "light";
-      root.dataset.theme = theme;
-      toggle.setAttribute("aria-pressed", String(dark));
-
+    apply();
+    document.getElementById("theme-toggle").addEventListener("click", () => {
+      mode = nextMode();
+      apply();
       try {
-        localStorage.setItem(storageKey, theme);
+        localStorage.setItem(key, mode);
       } catch {
-        // The current page has already switched themes.
+        // The current page still reflects the selected mode.
       }
     });
   });

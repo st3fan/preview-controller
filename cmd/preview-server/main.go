@@ -59,7 +59,7 @@ func run(settings string) error {
 	monitor := health.New(store, cfg.Projects, runner.ProbeHealth)
 	managementMux := http.NewServeMux()
 	dashboard.Register(managementMux, ctx, cfg.Projects, service.ListEnvironments, store.Changes, monitor)
-	dashboard.RegisterDetail(managementMux, cfg, store.Load)
+	dashboard.RegisterDetail(managementMux, cfg, store.Load, monitor)
 	dashboard.RegisterLogs(managementMux, ctx, store.Load, runner.OpenLogs)
 	dashboard.RegisterDelete(managementMux, service.DeleteEnvironment)
 	dashboard.RegisterArchive(managementMux, service.ArchiveEnvironment, service.RestoreEnvironment)

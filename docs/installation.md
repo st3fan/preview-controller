@@ -81,9 +81,11 @@ For an interactive Bash session:
 ```bash
 read -rsp 'Deployment token: ' PREVIEW_SERVER_TOKEN
 export PREVIEW_SERVER_TOKEN
-docker compose up -d --build
+PREVIEW_CONTROLLER_REVISION=$(git rev-parse HEAD) docker compose up -d --build
 unset PREVIEW_SERVER_TOKEN
 ```
+
+The build uses `PREVIEW_CONTROLLER_REVISION` to show the checkout’s short commit hash in the dashboard. Images built without revision metadata display “Development build”. Published release images include the release tag and revision.
 
 Supply the same token when recreating the service. Any variables referenced by
 `compose_env_from` also need to be passed through the controller service environment.

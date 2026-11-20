@@ -5,28 +5,49 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Project}} #{{.Intent}} · Preview environments</title>
-  <script src="/dashboard/assets/theme.js"></script>
-  <link rel="stylesheet" href="/dashboard/assets/dashboard.css">
+  {{template "page-assets"}}
 </head>
 <body>
-  <main>
-    <nav aria-label="Dashboard"><a href="/">Preview environments</a></nav>
-    <header class="page-header">
-      <h1>{{.Project}} {{template "intent-label" .}}</h1>
-      {{template "theme-toggle"}}
+  {{template "masthead"}}
+  <main class="wrap">
+    <nav class="crumb" aria-label="Breadcrumb"><a href="/">Preview environments</a> / {{.Project}} / #{{.Intent}}</nav>
+    <header class="detail-heading">
+      <div><h1>{{template "intent-label" .}}</h1>
+        <p class="intro">{{.Project}} · Type: Compose{{if .Deleting}} · Deleting{{else if .LifecycleOperation}} · {{.LifecycleOperation}}{{else if .DeleteAt}} · Archived{{end}}</p>
+      </div>
+      <div class="buttons">
+        {{if .IssueURL}}<a class="button" href="{{.IssueURL}}" target="_blank" rel="noopener">GitHub issue{{template "new-tab"}}</a>{{end}}
+        {{if .URL}}<a class="button primary" href="{{.URL}}" target="_blank" rel="noopener">Open preview{{template "new-tab"}}</a>{{end}}
+      </div>
     </header>
-    <p>{{if .URL}}<a href="{{.URL}}">Open preview</a>{{end}}{{if .IssueURL}}{{if .URL}} · {{end}}<a href="{{.IssueURL}}" target="_blank" rel="noopener">GitHub issue</a>{{end}}
-    {{if .Deleting}} · Deleting{{else if .LifecycleOperation}} · {{.LifecycleOperation}}{{else if .DeleteAt}} · Archived{{end}}</p>
+    {{$project := .Project}}{{$intent := .Intent}}
+    <div class="detail-grid">
+    <section class="panel">
+      <header class="panel-head"><h2>{{if .DeleteAt}}Archived deployment{{else}}Active deployment{{end}}</h2></header>
+      <div class="inside">
+      {{if .DeleteAt}}
+        <p>{{template "badge" "Offline"}} <strong>Archived commit</strong></p>
+        {{if .ActiveCommit}}{{if .ArchivedCommitURL}}<a href="{{.ArchivedCommitURL}}" target="_blank" rel="noopener"><code>{{.ActiveCommit}}</code>{{template "new-tab"}}</a>{{else}}<code>{{.ActiveCommit}}</code>{{end}}{{else if .Active}}{{template "attempt-commit" .Active}}{{else}}Unavailable{{end}}
+        {{with .Active}}{{template "attempt-timing" .}}{{end}}
+      {{else if .Active}}
+        <p>{{template "badge" .Health.Status}} <strong>Active commit</strong></p>
+        {{template "attempt-commit" .Active}}
+        {{if .Active.LiveLogs}} · <a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.Active.ID}}" target="_blank" rel="noopener">Live logs{{template "new-tab"}}</a>{{end}}
+        {{template "attempt-timing" .Active}}
+      {{else}}<p>No active deployment.</p>{{end}}
+      </div>
+    </section>
     {{if .GitHubEnabled}}
-    <section aria-labelledby="github-work">
-      <h2 id="github-work">GitHub work</h2>
+    <section class="panel" aria-labelledby="github-work">
+      <header class="panel-head"><h2 id="github-work">GitHub work</h2></header>
+      <div class="inside">
       {{with .GitHub.Intent}}
-      <p>Intent <a href="{{$.IssueURL}}">#{{.Number}}</a> · {{.State}}</p>
+      <p>Intent <a href="{{$.IssueURL}}" target="_blank" rel="noopener">#{{.Number}}{{template "new-tab"}}</a> · {{.State}}</p>
       <h3>Related issues</h3>
       {{if $.GitHub.Related}}
       <ul>
         {{range $.GitHub.Related}}
-        <li><a href="{{$.RepositoryURL}}/issues/{{.Number}}">#{{.Number}} {{.Title}}</a> · {{.State}}</li>
+        <li><a href="{{$.RepositoryURL}}/issues/{{.Number}}" target="_blank" rel="noopener">#{{.Number}} {{.Title}}{{template "new-tab"}}</a> · {{.State}}</li>
         {{end}}
       </ul>
       {{else if $.GitHub.Partial}}<p>Related issues unavailable.</p>
@@ -35,7 +56,7 @@
       {{if $.GitHub.Pulls}}
       {{if $.GitHub.Ordered}}<ol>{{else}}<p>Stack order unavailable.</p><ul>{{end}}
         {{range $.GitHub.Pulls}}
-        <li><a href="{{$.RepositoryURL}}/pull/{{.Number}}">#{{.Number}} {{.Title}}</a> · {{.State}}</li>
+        <li><a href="{{$.RepositoryURL}}/pull/{{.Number}}" target="_blank" rel="noopener">#{{.Number}} {{.Title}}{{template "new-tab"}}</a> · {{.State}}</li>
         {{end}}
       {{if $.GitHub.Ordered}}</ol>{{else}}</ul>{{end}}
       {{else if $.GitHub.Partial}}<p>Linked pull requests unavailable.</p>
@@ -43,38 +64,16 @@
       {{if $.GitHub.Partial}}<p>GitHub returned incomplete results.</p>{{end}}
       {{else}}<p>GitHub metadata unavailable.</p>{{end}}
       <p><a href="#activity">Activity timeline</a></p>
+      </div>
     </section>
     {{end}}
-    {{$project := .Project}}{{$intent := .Intent}}
-    <section>
-      <h2>Active deployment</h2>
-      {{with .Active}}
-      <p>{{template "attempt-summary" .}}
-        {{if .LiveLogs}} · <a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}" target="_blank" rel="noopener">Live logs</a>{{end}}
-      </p>
-      {{template "attempt-timing" .}}
-      {{else}}<p>No active deployment.</p>{{end}}
-    </section>
-    <section aria-labelledby="activity">
-      <h2 id="activity">Activity timeline</h2>
-      {{if not .GitHubEnabled}}<p>GitHub activity is disabled.</p>
-      {{else if not .GitHub.Intent}}<p>GitHub activity is unavailable.</p>
-      {{else if .ActivityPartial}}<p>GitHub activity is incomplete.</p>{{end}}
-      {{if .DeploymentActivityPartial}}<p>Controller deployment activity is incomplete.</p>{{end}}
-      {{if .Activity}}
-      <ol>
-        {{range .Activity}}
-        <li>{{template "attempt-time" .At}} · {{.Source}} · {{if .URL}}<a href="{{.URL}}">{{.Label}}</a>{{else}}{{.Label}}{{end}}{{with .Detail}} · {{.}}{{end}}</li>
-        {{end}}
-      </ol>
-      {{else}}<p>No recorded activity.</p>{{end}}
-    </section>
-    <section>
-      <h2>Recent attempts</h2>
+    <section class="panel attempts">
+      <header class="panel-head"><h2>Recent attempts</h2></header>
+      <div class="inside">
       {{range .Recent}}
       <article id="attempt-{{.ID}}">
         <p>{{template "attempt-summary" .}}
-          {{if .LiveLogs}} · <a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}" target="_blank" rel="noopener">Live logs</a>{{end}}
+          {{if .LiveLogs}} · <a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}" target="_blank" rel="noopener">Live logs{{template "new-tab"}}</a>{{end}}
         </p>
         {{template "attempt-timing" .}}
         {{if .Diagnostic.Stage}}
@@ -83,19 +82,39 @@
         {{end}}
       </article>
       {{else}}<p>No deployment attempts.</p>{{end}}
+      </div>
     </section>
+    <section class="panel" aria-labelledby="activity">
+      <header class="panel-head"><h2 id="activity">Activity timeline</h2></header>
+      <div class="inside">
+      {{if not .GitHubEnabled}}<p>GitHub activity is disabled.</p>
+      {{else if not .GitHub.Intent}}<p>GitHub activity is unavailable.</p>
+      {{else if .ActivityPartial}}<p>GitHub activity is incomplete.</p>{{end}}
+      {{if .DeploymentActivityPartial}}<p>Controller deployment activity is incomplete.</p>{{end}}
+      {{if .Activity}}
+      <ol class="timeline">
+        {{range .Activity}}
+        <li>{{template "attempt-time" .At}} · {{.Source}} · {{if .URL}}<a href="{{.URL}}"{{if not (isFragment .URL)}} target="_blank" rel="noopener"{{end}}>{{.Label}}{{if not (isFragment .URL)}}{{template "new-tab"}}{{end}}</a>{{else}}{{.Label}}{{end}}{{with .Detail}} · {{.}}{{end}}</li>
+        {{end}}
+      </ol>
+      {{else}}<p>No recorded activity.</p>{{end}}
+      </div>
+    </section>
+    </div>
   </main>
 </body>
 </html>
 {{end}}
 
-{{define "attempt-summary"}}<code>{{.Commit}}</code> · <span class="status {{.Status}}">{{.Status}}</span>{{end}}
+{{define "attempt-commit"}}{{if .CommitURL}}<a href="{{.CommitURL}}" target="_blank" rel="noopener"><code>{{.Commit}}</code>{{template "new-tab"}}</a>{{else}}<code>{{.Commit}}</code>{{end}}{{end}}
+{{define "attempt-summary"}}{{template "badge" (outcome .Status)}} {{template "attempt-commit" .}}{{end}}
 {{define "attempt-time"}}<time datetime="{{.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.UTC.Format "Jan 2, 2006 15:04:05 UTC"}}</time>{{end}}
 
 {{define "attempt-timing"}}
-<p>
-  {{if not .CreatedAt.IsZero}}Accepted {{template "attempt-time" .CreatedAt}} · {{end}}
-  {{with .TimeToPreview}}Activated {{template "attempt-time" $.ActivatedAt}} · Time to preview {{.}}{{else}}Timing unavailable{{end}}
-  {{if not .UpdatedAt.IsZero}} · Updated {{template "attempt-time" .UpdatedAt}}{{end}}
-</p>
+<dl class="timing">
+  {{if not .CreatedAt.IsZero}}<div><dt>Accepted</dt><dd>{{template "attempt-time" .CreatedAt}}</dd></div>{{end}}
+  {{with .TimeToPreview}}<div><dt>Activated</dt><dd>{{template "attempt-time" $.ActivatedAt}}</dd></div>
+  <div><dt>Time to preview</dt><dd>{{.}}</dd></div>{{else}}<div><dt>Time to preview</dt><dd>Timing unavailable</dd></div>{{end}}
+  {{if not .UpdatedAt.IsZero}}<div><dt>Updated</dt><dd>{{template "attempt-time" .UpdatedAt}}</dd></div>{{end}}
+</dl>
 {{end}}
