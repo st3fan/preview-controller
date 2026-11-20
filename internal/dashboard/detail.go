@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/st3fan/preview-controller/internal/config"
 	"github.com/st3fan/preview-controller/internal/state"
@@ -17,6 +18,13 @@ type detailAttempt struct {
 	state.Attempt
 	LiveLogs   bool
 	Diagnostic state.Diagnostic
+}
+
+func (a detailAttempt) TimeToPreview() string {
+	if a.CreatedAt.IsZero() || a.ActivatedAt == nil || a.ActivatedAt.Before(a.CreatedAt) {
+		return ""
+	}
+	return a.ActivatedAt.Sub(a.CreatedAt).Round(time.Millisecond).String()
 }
 
 type detailView struct {

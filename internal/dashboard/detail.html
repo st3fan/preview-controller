@@ -24,7 +24,7 @@
       <p>{{template "attempt-summary" .}}
         {{if .LiveLogs}} · <a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}" target="_blank" rel="noopener">Live logs</a>{{end}}
       </p>
-      <p>Submitted {{template "attempt-time" .CreatedAt}} · Updated {{template "attempt-time" .UpdatedAt}}</p>
+      {{template "attempt-timing" .}}
       {{else}}<p>No active deployment.</p>{{end}}
     </section>
     <section>
@@ -34,7 +34,7 @@
         <p>{{template "attempt-summary" .}}
           {{if .LiveLogs}} · <a href="/dashboard/logs/{{$project}}/{{$intent}}/{{.ID}}" target="_blank" rel="noopener">Live logs</a>{{end}}
         </p>
-        <p>Submitted {{template "attempt-time" .CreatedAt}} · Updated {{template "attempt-time" .UpdatedAt}}</p>
+        {{template "attempt-timing" .}}
         {{if .Diagnostic.Stage}}
         <p><strong>{{.Diagnostic.Stage}}</strong> · {{.Diagnostic.Summary}}</p>
         {{with .Diagnostic.Output}}<pre class="diagnostic-output">{{.}}</pre>{{end}}
@@ -49,3 +49,11 @@
 
 {{define "attempt-summary"}}<code>{{.Commit}}</code> · <span class="status {{.Status}}">{{.Status}}</span>{{end}}
 {{define "attempt-time"}}<time datetime="{{.UTC.Format "2006-01-02T15:04:05Z07:00"}}">{{.UTC.Format "Jan 2, 2006 15:04:05 UTC"}}</time>{{end}}
+
+{{define "attempt-timing"}}
+<p>
+  {{if not .CreatedAt.IsZero}}Accepted {{template "attempt-time" .CreatedAt}} · {{end}}
+  {{with .TimeToPreview}}Activated {{template "attempt-time" $.ActivatedAt}} · Time to preview {{.}}{{else}}Timing unavailable{{end}}
+  {{if not .UpdatedAt.IsZero}} · Updated {{template "attempt-time" .UpdatedAt}}{{end}}
+</p>
+{{end}}
