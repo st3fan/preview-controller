@@ -21,9 +21,11 @@ func TestPreviewDetail(t *testing.T) {
 	RegisterDetail(mux, config.Config{PreviewDomain: "preview.example.com", Projects: map[string]config.Project{
 		"alpha": {Repository: "https://github.com/example/alpha.git"},
 	}}, store.Load)
+	acceptedAt := time.Date(2026, 11, 20, 12, 29, 0, 0, time.UTC)
+	activatedAt := acceptedAt.Add(42 * time.Second)
 	env := state.Environment{
 		ID: state.ID("alpha", 18), Project: "alpha", Intent: 18, URL: "https://alpha-18.preview.example.com", ActiveDeploymentID: "active",
-		Attempts: []state.Attempt{{ID: "active", Commit: fmt.Sprintf("%040x", 100), Status: state.Healthy, ComposeProject: "running"}},
+		Attempts: []state.Attempt{{ID: "active", Commit: fmt.Sprintf("%040x", 100), Status: state.Healthy, ComposeProject: "running", CreatedAt: acceptedAt, ActivatedAt: &activatedAt}},
 	}
 	for i := 1; i <= 11; i++ {
 		env.Attempts = append(env.Attempts, state.Attempt{
@@ -31,6 +33,8 @@ func TestPreviewDetail(t *testing.T) {
 			CreatedAt: time.Date(2026, 11, 20, 12, 30, 0, 0, time.UTC),
 		})
 	}
+	env.Attempts[10].Status = state.Retired
+	env.Attempts[10].ActivatedAt = new(env.Attempts[10].CreatedAt.Add(23 * time.Second))
 	env.Diagnostics = map[string]state.Diagnostic{
 		"attempt-11": {Stage: state.BuildStage, Summary: "Build failed.", Output: "<script>alert(1)</script>"},
 	}
@@ -43,6 +47,11 @@ func TestPreviewDetail(t *testing.T) {
 	page := readPage(t, server.Client(), path+"18", http.StatusOK)
 	requireText(t, page, env.URL, "https://github.com/example/alpha/issues/18", "alpha #18",
 		env.Attempts[0].Commit, "/dashboard/logs/alpha/18/active", "2026-11-20T12:30:00Z", "Compose build", "Build failed.", "&lt;script&gt;alert(1)&lt;/script&gt;")
+	requireText(t, page, "2026-11-20T12:29:00Z", "2026-11-20T12:29:42Z", "Time to preview 42s",
+		"2026-11-20T12:30:23Z", "Time to preview 23s", "Timing unavailable")
+	if strings.Count(page, "Time to preview") != 2 {
+		t.Fatalf("unexpected attempt timings: %s", page)
+	}
 	if strings.Contains(page, "<script>alert") {
 		t.Fatal("diagnostics rendered as markup")
 	}

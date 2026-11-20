@@ -29,16 +29,17 @@ const (
 )
 
 type Attempt struct {
-	IssueTitle     string    `json:"issue_title,omitempty"`
-	ID             string    `json:"id"`
-	Commit         string    `json:"commit"`
-	Status         Status    `json:"status"`
-	Port           int       `json:"port,omitempty"`
-	Workspace      string    `json:"workspace,omitempty"`
-	ComposeProject string    `json:"compose_project,omitempty"`
-	Error          string    `json:"error,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	IssueTitle     string     `json:"issue_title,omitempty"`
+	ID             string     `json:"id"`
+	Commit         string     `json:"commit"`
+	Status         Status     `json:"status"`
+	Port           int        `json:"port,omitempty"`
+	Workspace      string     `json:"workspace,omitempty"`
+	ComposeProject string     `json:"compose_project,omitempty"`
+	Error          string     `json:"error,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	ActivatedAt    *time.Time `json:"activated_at,omitempty"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 type FailureStage string

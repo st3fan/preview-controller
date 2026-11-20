@@ -148,6 +148,10 @@ func TestFirstDeploymentAndRestartRecovery(t *testing.T) {
 	if port, err := s.ActivePort("myproject", 11); err != nil || port != 12345 {
 		t.Fatalf("first active port = %d, %v", port, err)
 	}
+	activated, _, err := s.GetDeployment(attempt.ID)
+	if err != nil || activated.ActivatedAt == nil || activated.ActivatedAt.Before(attempt.CreatedAt) {
+		t.Fatalf("activation timing = %+v, %v", activated, err)
+	}
 	s.Close()
 	restarted, err := New(cfg, store, fakeVerifier{}, fakeRunner{})
 	if err != nil {
@@ -156,6 +160,10 @@ func TestFirstDeploymentAndRestartRecovery(t *testing.T) {
 	defer restarted.Close()
 	if port, err := restarted.ActivePort("myproject", 11); err != nil || port != 12345 {
 		t.Fatalf("recovered active port = %d, %v", port, err)
+	}
+	recovered, _, err := restarted.GetDeployment(attempt.ID)
+	if err != nil || recovered.ActivatedAt == nil || !recovered.ActivatedAt.Equal(*activated.ActivatedAt) {
+		t.Fatalf("recovered activation timing = %+v, %v", recovered, err)
 	}
 }
 
@@ -272,7 +280,7 @@ func TestVerificationFailureAndRestartRecovery(t *testing.T) {
 	}
 	defer restarted.Close()
 	current, err := restarted.GetEnvironment("myproject:6")
-	if err != nil || current.Attempts[0].Status != state.Failed || !strings.Contains(current.Attempts[0].Error, "restarted") {
+	if err != nil || current.Attempts[0].Status != state.Failed || !strings.Contains(current.Attempts[0].Error, "restarted") || current.Attempts[0].ActivatedAt != nil {
 		t.Fatalf("recovered state = %+v, %v", current, err)
 	}
 }
@@ -351,8 +359,9 @@ func TestRuntimeCandidateTransitionsAndPreservesActiveOnFailure(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			previousActivation := time.Now().UTC().Add(-time.Minute)
 			previous := state.Environment{ID: state.ID("myproject", 123), Project: "myproject", Intent: 123,
-				ActiveDeploymentID: "deployment-previous", ActiveCommit: strings.Repeat("c", 40), Attempts: []state.Attempt{{ID: "deployment-previous", Commit: strings.Repeat("c", 40), Status: state.Healthy, Port: 12344}}}
+				ActiveDeploymentID: "deployment-previous", ActiveCommit: strings.Repeat("c", 40), Attempts: []state.Attempt{{ID: "deployment-previous", Commit: strings.Repeat("c", 40), Status: state.Healthy, Port: 12344, ActivatedAt: &previousActivation}}}
 			if err := store.Save(previous); err != nil {
 				t.Fatal(err)
 			}
@@ -368,6 +377,9 @@ func TestRuntimeCandidateTransitionsAndPreservesActiveOnFailure(t *testing.T) {
 			attempt, _, err := s.Submit("myproject", 123, strings.Repeat("a", 40))
 			if err != nil {
 				t.Fatal(err)
+			}
+			if attempt.CreatedAt.IsZero() || attempt.ActivatedAt != nil {
+				t.Fatalf("queued candidate timing = %+v", attempt)
 			}
 			deadline := time.Now().Add(3 * time.Second)
 			for time.Now().Before(deadline) {
@@ -387,6 +399,21 @@ func TestRuntimeCandidateTransitionsAndPreservesActiveOnFailure(t *testing.T) {
 					}
 					if candidate.ID != attempt.ID || candidate.Status != want || candidate.Port != 12345 || env.ActiveDeploymentID != active {
 						t.Fatalf("candidate and active state = %+v, %+v", candidate, env)
+					}
+					if failure && candidate.ActivatedAt != nil {
+						t.Fatalf("failed candidate recorded activation: %v", candidate.ActivatedAt)
+					}
+					if !failure && (candidate.ActivatedAt == nil || candidate.ActivatedAt.Before(attempt.CreatedAt)) {
+						t.Fatalf("successful candidate activation = %v", candidate.ActivatedAt)
+					}
+					s.Close()
+					saved, err := store.Load("myproject", 123)
+					if err != nil {
+						t.Fatal(err)
+					}
+					old := saved.Attempts[0]
+					if old.ActivatedAt == nil || !old.ActivatedAt.Equal(previousActivation) || (!failure && old.Status != state.Retired) {
+						t.Fatalf("previous attempt after replacement = %+v", old)
 					}
 					return
 				}

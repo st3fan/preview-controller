@@ -323,11 +323,13 @@ func (s *Service) activate(project string, intent int64, candidate state.Attempt
 			if env.Attempts[i].Status != state.Starting {
 				return state.Attempt{}, fmt.Errorf("candidate has unexpected status %s", env.Attempts[i].Status)
 			}
+			activatedAt := time.Now().UTC()
 			env.Attempts[i].Status = state.Healthy
+			env.Attempts[i].ActivatedAt = &activatedAt
 			env.Attempts[i].Port = result.Port
 			env.Attempts[i].Workspace = result.Workspace
 			env.Attempts[i].ComposeProject = result.ComposeProject
-			env.Attempts[i].UpdatedAt = time.Now().UTC()
+			env.Attempts[i].UpdatedAt = activatedAt
 			found = true
 			break
 		}
