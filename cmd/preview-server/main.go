@@ -17,6 +17,7 @@ import (
 	"github.com/st3fan/preview-controller/internal/dashboard"
 	"github.com/st3fan/preview-controller/internal/deploy"
 	"github.com/st3fan/preview-controller/internal/gitverify"
+	"github.com/st3fan/preview-controller/internal/health"
 	"github.com/st3fan/preview-controller/internal/ingress"
 	"github.com/st3fan/preview-controller/internal/runtime"
 	"github.com/st3fan/preview-controller/internal/state"
@@ -55,8 +56,9 @@ func run(settings string) error {
 	defer service.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	monitor := health.New(store, cfg.Projects, runner.ProbeHealth)
 	managementMux := http.NewServeMux()
-	dashboard.Register(managementMux, ctx, cfg.Projects, service.ListEnvironments, store.Changes)
+	dashboard.Register(managementMux, ctx, cfg.Projects, service.ListEnvironments, store.Changes, monitor)
 	dashboard.RegisterLogs(managementMux, ctx, store.Load, runner.OpenLogs)
 	dashboard.RegisterDelete(managementMux, service.DeleteEnvironment)
 	dashboard.RegisterArchive(managementMux, service.ArchiveEnvironment, service.RestoreEnvironment)
@@ -87,6 +89,11 @@ func run(settings string) error {
 		return err
 	}
 	defer previewListener.Close()
+	monitorDone := make(chan struct{})
+	go func() {
+		defer close(monitorDone)
+		monitor.Run(ctx)
+	}()
 	errorsFromServers := make(chan error, 2)
 	go func() { errorsFromServers <- management.Serve(managementListener) }()
 	go func() { errorsFromServers <- preview.Serve(previewListener) }()
@@ -98,6 +105,7 @@ func run(settings string) error {
 	case serveErr = <-errorsFromServers:
 	}
 	stop()
+	<-monitorDone
 	slog.Debug("shutting down preview server")
 	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

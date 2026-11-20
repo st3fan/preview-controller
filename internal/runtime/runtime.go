@@ -305,19 +305,9 @@ func (r *Runtime) runDocker(ctx context.Context, limit int, confidential bool, a
 func (r *Runtime) probe(ctx context.Context, port int, path string) error {
 	deadline, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	url := fmt.Sprintf("http://127.0.0.1:%d%s", port, path)
 	for {
-		request, err := http.NewRequestWithContext(deadline, http.MethodGet, url, nil)
-		if err != nil {
-			return err
-		}
-		response, err := r.client.Do(request)
-		if err == nil {
-			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
-			response.Body.Close()
-			if response.StatusCode >= 200 && response.StatusCode < 300 {
-				return nil
-			}
+		if err := r.ProbeHealth(deadline, port, path); err == nil {
+			return nil
 		}
 		select {
 		case <-deadline.Done():
@@ -325,6 +315,26 @@ func (r *Runtime) probe(ctx context.Context, port int, path string) error {
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+// ProbeHealth checks one HTTP response from the preview's loopback endpoint.
+func (r *Runtime) ProbeHealth(ctx context.Context, port int, path string) error {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d%s", port, path), nil)
+	if err != nil {
+		return errors.New("invalid health endpoint")
+	}
+	response, err := r.client.Do(request)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return errors.New("health check timed out")
+		}
+		return errors.New("health endpoint did not respond")
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return fmt.Errorf("HTTP %d", response.StatusCode)
+	}
+	return nil
 }
 
 type cappedOutput struct {

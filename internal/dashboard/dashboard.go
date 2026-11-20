@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/st3fan/preview-controller/internal/config"
+	"github.com/st3fan/preview-controller/internal/health"
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
@@ -39,6 +40,7 @@ type environment struct {
 	ShortCommit    string
 	CommitURL      string
 	Status         state.Status
+	Health         health.Observation
 	Logs           []state.Attempt
 }
 
@@ -53,7 +55,7 @@ type view struct {
 	Archived    []environment
 }
 
-func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]config.Project, list func() ([]state.Environment, error), changes func() <-chan struct{}) {
+func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]config.Project, list func() ([]state.Environment, error), changes func() <-chan struct{}, monitor *health.Monitor) {
 	load := func() view {
 		envs, err := list()
 		if err != nil {
@@ -63,6 +65,7 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 		for _, env := range envs {
 			row := environment{
 				Project:        env.Project,
+				Health:         monitor.Lookup(env),
 				Archived:       env.DeleteAt != nil,
 				CanArchive:     !env.Deleting && env.DeleteAt == nil && env.ActiveDeploymentID != "",
 				CanRestore:     !env.Deleting && env.DeleteAt != nil,
@@ -135,7 +138,7 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 			w.Header().Set("Content-Type", "text/event-stream")
 			return
 		}
-		stream(w, r, shutdown, load, changes)
+		stream(w, r, shutdown, load, changes, monitor.Changes)
 	})
 	for _, name := range []string{"htmx-2.0.11.min.js", "sse-2.2.4.js", "dashboard.css", "theme.js", "delete.js", "trash.svg"} {
 		mux.HandleFunc("GET /dashboard/assets/"+name, func(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +147,7 @@ func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]
 	}
 }
 
-func stream(w http.ResponseWriter, r *http.Request, shutdown context.Context, load func() view, changes func() <-chan struct{}) {
+func stream(w http.ResponseWriter, r *http.Request, shutdown context.Context, load func() view, changes, healthChanges func() <-chan struct{}) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-store")
 	controller := http.NewResponseController(w)
@@ -166,6 +169,7 @@ func stream(w http.ResponseWriter, r *http.Request, shutdown context.Context, lo
 	var previous string
 	for {
 		changed := changes()
+		healthChanged := healthChanges()
 		var fragment bytes.Buffer
 		if err := templates.ExecuteTemplate(&fragment, "environments", load()); err != nil {
 			return
@@ -185,6 +189,8 @@ func stream(w http.ResponseWriter, r *http.Request, shutdown context.Context, lo
 			case <-shutdown.Done():
 				return
 			case <-changed:
+				waiting = false
+			case <-healthChanged:
 				waiting = false
 			case <-heartbeat.C:
 				if err := write(": keepalive\n\n"); err != nil {

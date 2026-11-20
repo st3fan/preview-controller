@@ -107,6 +107,18 @@ The controller writes one atomic JSON file per environment at
 `<state-root>/<project>/<intent>.json`. It records attempts and errors there.
 Docker is the source of runtime container state.
 
+## Active preview health
+
+The dashboard reports active preview health alongside the latest deployment
+status. The controller checks each active preview's configured `health_path`
+on its local port. It starts a round every 30 seconds, with up to four checks
+in flight and a three-second timeout per check.
+
+Health starts at Unknown, becomes Unhealthy after two consecutive failures,
+and becomes Healthy on any successful check. The dashboard shows the last
+success and any current failure summary. Observations reset on controller
+restart or preview activation. Health failures leave the active route in place.
+
 ## Preview retention
 
 Previews archive after seven days from their last healthy deployment or restore.
