@@ -8,9 +8,11 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/st3fan/preview-controller/internal/config"
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
@@ -19,12 +21,17 @@ var files embed.FS
 
 var templates = template.Must(template.ParseFS(files, "dashboard.html"))
 
+var commitSHA = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+
 type environment struct {
-	Intent int64
-	URL    string
-	Commit string
-	Status state.Status
-	Logs   []state.Attempt
+	Intent      int64
+	IntentURL   string
+	URL         string
+	Commit      string
+	ShortCommit string
+	CommitURL   string
+	Status      state.Status
+	Logs        []state.Attempt
 }
 
 type project struct {
@@ -37,7 +44,7 @@ type view struct {
 	Projects    []project
 }
 
-func Register(mux *http.ServeMux, shutdown context.Context, list func() ([]state.Environment, error), changes func() <-chan struct{}) {
+func Register(mux *http.ServeMux, shutdown context.Context, projects map[string]config.Project, list func() ([]state.Environment, error), changes func() <-chan struct{}) {
 	load := func() view {
 		envs, err := list()
 		if err != nil {
@@ -48,7 +55,18 @@ func Register(mux *http.ServeMux, shutdown context.Context, list func() ([]state
 			if len(data.Projects) == 0 || data.Projects[len(data.Projects)-1].Name != env.Project {
 				data.Projects = append(data.Projects, project{Name: env.Project})
 			}
-			row := environment{Intent: env.Intent, URL: env.URL, Commit: env.ActiveCommit}
+			row := environment{
+				Intent: env.Intent, URL: env.URL, Commit: env.ActiveCommit,
+				ShortCommit: env.ActiveCommit[:min(7, len(env.ActiveCommit))],
+			}
+			if project, ok := projects[env.Project]; ok {
+				// Configuration has already validated the repository as a GitHub HTTPS URL.
+				repository := strings.TrimSuffix(strings.TrimRight(project.Repository, "/"), ".git")
+				row.IntentURL = fmt.Sprintf("%s/issues/%d", repository, env.Intent)
+				if commitSHA.MatchString(env.ActiveCommit) {
+					row.CommitURL = repository + "/commit/" + env.ActiveCommit
+				}
+			}
 			if len(env.Attempts) > 0 {
 				row.Status = env.Attempts[len(env.Attempts)-1].Status
 			}
@@ -86,7 +104,7 @@ func Register(mux *http.ServeMux, shutdown context.Context, list func() ([]state
 		}
 		stream(w, r, shutdown, load, changes)
 	})
-	for _, name := range []string{"htmx-2.0.11.min.js", "sse-2.2.4.js", "dashboard.css"} {
+	for _, name := range []string{"htmx-2.0.11.min.js", "sse-2.2.4.js", "dashboard.css", "theme.js"} {
 		mux.HandleFunc("GET /dashboard/assets/"+name, func(w http.ResponseWriter, r *http.Request) {
 			http.ServeFileFS(w, r, files, "assets/"+name)
 		})
