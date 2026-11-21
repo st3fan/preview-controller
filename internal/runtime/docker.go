@@ -112,6 +112,7 @@ func (r dockerBackend) container(ctx context.Context, a state.Attempt) (string, 
 	out, err := r.docker(ctx, 1024, "container", "ls", "-aq", "--no-trunc", "--filter", "label="+attemptLabel+"="+a.ID, "--filter", "name=^/"+projectNameForAttempt(a)+"$")
 	return strings.TrimSpace(out), err
 }
+
 func (r dockerBackend) running(ctx context.Context, a state.Attempt) (bool, error) {
 	id, err := r.container(ctx, a)
 	if err != nil || id == "" {
@@ -124,6 +125,7 @@ func (r dockerBackend) running(ctx context.Context, a state.Attempt) (bool, erro
 	port, err := r.endpoint(ctx, id)
 	return err == nil && port == a.Port, err
 }
+
 func (r dockerBackend) stop(ctx context.Context, a state.Attempt) error {
 	id, err := r.container(ctx, a)
 	if err != nil || id == "" {
@@ -132,6 +134,7 @@ func (r dockerBackend) stop(ctx context.Context, a state.Attempt) error {
 	_, err = r.docker(ctx, 1024, "stop", id)
 	return err
 }
+
 func (r dockerBackend) restore(ctx context.Context, _ string, _ int64, cfg config.Project, a state.Attempt) (int, error) {
 	id, err := r.container(ctx, a)
 	if err != nil {
@@ -152,6 +155,7 @@ func (r dockerBackend) restore(ctx context.Context, _ string, _ int64, cfg confi
 	}
 	return port, nil
 }
+
 func (r dockerBackend) logs(ctx context.Context, a state.Attempt) (func(io.Writer) error, error) {
 	id, err := r.container(ctx, a)
 	if err != nil {
@@ -162,6 +166,7 @@ func (r dockerBackend) logs(ctx context.Context, a state.Attempt) (func(io.Write
 	}
 	return r.followLogs(ctx, true, "logs", "--tail", "100", "--follow", id), nil
 }
+
 func (r dockerBackend) remove(ctx context.Context, a state.Attempt) error {
 	id, err := r.container(ctx, a)
 	if err != nil {

@@ -44,6 +44,7 @@ func (r *Runtime) Stop(ctx context.Context, a state.Attempt) error {
 	}
 	return b.stop(ctx, a)
 }
+
 func (r *Runtime) Restore(ctx context.Context, project string, intent int64, cfg config.Project, a state.Attempt) (int, error) {
 	b, err := r.backend(a)
 	if err != nil {
@@ -51,6 +52,7 @@ func (r *Runtime) Restore(ctx context.Context, project string, intent int64, cfg
 	}
 	return b.restore(ctx, project, intent, cfg, a)
 }
+
 func (r *Runtime) OpenLogs(ctx context.Context, a state.Attempt) (func(io.Writer) error, error) {
 	b, err := r.backend(a)
 	if err != nil {

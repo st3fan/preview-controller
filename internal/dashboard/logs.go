@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/st3fan/preview-controller/internal/config"
 	"io"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/st3fan/preview-controller/internal/config"
 	"github.com/st3fan/preview-controller/internal/runtime"
 	"github.com/st3fan/preview-controller/internal/state"
 )

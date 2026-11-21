@@ -271,6 +271,49 @@ func testFullPreviewLifecycle(t *testing.T, backend string) {
 	ingress.Handler(cfg, service).ServeHTTP(w, r)
 	if backend == config.BackendDocker {
 		preview(124, "second")
+		service.Close()
+		// Reconfigure the project, then restore/expire attempts created under its
+		// previous settings. The override selects 8080 from the ambiguous image.
+		project := cfg.Projects["fixture"]
+		project.PublicPort = 8080
+		cfg.Projects["fixture"] = project
+		service, err = deploy.New(cfg, store, gitverify.Verifier{}, runner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		overridden := submit(123, bad)
+		wait(123, overridden.ID, state.Healthy)
+		preview(123, "bad")
+		if err := service.ArchiveEnvironment("fixture:124"); err != nil {
+			t.Fatal(err)
+		}
+		service.Close()
+		env, err := store.Load("fixture", 124)
+		if err != nil {
+			t.Fatal(err)
+		}
+		past := time.Now().Add(-time.Minute)
+		env.DeleteAt = &past
+		if err := store.Save(env); err != nil {
+			t.Fatal(err)
+		}
+		cfg.Projects["fixture"] = config.Project{Repository: source, ComposeFile: "compose.preview.yaml", PublicService: "web", HealthPath: "/"}
+		service, err = deploy.New(cfg, store, gitverify.Verifier{}, runner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		deadline := time.Now().Add(time.Minute)
+		for {
+			_, err = store.Load("fixture", 124)
+			if errors.Is(err, state.ErrNotFound) {
+				break
+			}
+			if err != nil || time.Now().After(deadline) {
+				t.Fatalf("archived Docker preview did not expire: %v", err)
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		preview(123, "bad")
 	}
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("deleted preview status = %d", w.Code)

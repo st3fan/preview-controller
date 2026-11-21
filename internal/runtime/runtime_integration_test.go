@@ -93,7 +93,7 @@ func TestComposeCandidateLifecycle(t *testing.T) {
 	if alive, err := runner.Check(ctx, attempt, project); err != nil || alive {
 		t.Fatalf("archived stack check = %v, %v", alive, err)
 	}
-	port, err := runner.Restore(ctx, "fixture", 1, project, attempt)
+	port, err := runner.Restore(ctx, "fixture", 1, config.Project{Backend: config.BackendDocker, HealthPath: "/"}, attempt)
 	if err != nil {
 		t.Fatal(err)
 	}
