@@ -29,6 +29,7 @@ const (
 )
 
 type Attempt struct {
+	RequestKeyHash string     `json:"request_key_hash,omitempty"`
 	Backend        string     `json:"backend,omitempty"`
 	IssueTitle     string     `json:"issue_title,omitempty"`
 	ID             string     `json:"id"`

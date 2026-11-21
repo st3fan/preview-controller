@@ -17,7 +17,7 @@ type deploymentBackend interface {
 	remove(context.Context, state.Attempt) error
 	stop(context.Context, state.Attempt) error
 	restore(context.Context, string, int64, config.Project, state.Attempt) (int, error)
-	logs(context.Context, state.Attempt) (func(io.Writer) error, error)
+	logs(context.Context, state.Attempt, bool) (func(io.Writer) error, error)
 }
 
 type composeBackend struct{ *Runtime }
@@ -58,5 +58,5 @@ func (r *Runtime) OpenLogs(ctx context.Context, a state.Attempt) (func(io.Writer
 	if err != nil {
 		return nil, ErrLogsUnavailable
 	}
-	return b.logs(ctx, a)
+	return b.logs(ctx, a, true)
 }

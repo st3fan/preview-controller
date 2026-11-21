@@ -183,7 +183,7 @@ func (r dockerBackend) restore(ctx context.Context, _ string, _ int64, cfg confi
 	return port, nil
 }
 
-func (r dockerBackend) logs(ctx context.Context, a state.Attempt) (func(io.Writer) error, error) {
+func (r dockerBackend) logs(ctx context.Context, a state.Attempt, follow bool) (func(io.Writer) error, error) {
 	id, err := r.container(ctx, a)
 	if err != nil {
 		return nil, err
@@ -191,7 +191,11 @@ func (r dockerBackend) logs(ctx context.Context, a state.Attempt) (func(io.Write
 	if id == "" {
 		return nil, ErrLogsUnavailable
 	}
-	return r.followLogs(ctx, true, "logs", "--tail", "100", "--follow", id), nil
+	args := []string{"logs", "--tail", "100"}
+	if follow {
+		args = append(args, "--follow")
+	}
+	return r.runLogs(ctx, true, append(args, id)...), nil
 }
 
 func (r dockerBackend) remove(ctx context.Context, a state.Attempt) error {
