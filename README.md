@@ -141,8 +141,9 @@ preview-owned build tags and retains shared images.
 ## Coding agents (MCP)
 
 Connect a Streamable HTTP MCP client to `/mcp` on the controller’s management
-address. Configure the client to send `Authorization: Bearer <deployment-token>`
+address. By default, configure the client to send `Authorization: Bearer <deployment-token>`
 on every request. The same credential grants access to all seven tools.
+For browser sign-in with individual operator identities, enable Pocket ID as described below.
 
 Use `list_projects` to match the checkout’s Git remote to a configured project
 ID, including before its first preview. Use `list_previews` or `get_preview`
@@ -161,6 +162,74 @@ up to 8 KiB of service output before cleanup under the existing diagnostic
 retention policy. Projects with configured Compose environment values suppress
 persisted output. Use `remove_preview`
 to permanently remove the environment and its history.
+
+### Pocket ID sign-in on the LAN or VPN
+
+Use a private HTTPS name reachable from your agent workstation. The following
+Caddy example forwards the two MCP paths to the management listener. Substitute
+your private DNS name, listener address, and usual TLS settings.
+
+```caddyfile
+mcp.example.net {
+    @mcp path /mcp /.well-known/oauth-protected-resource/mcp
+    handle @mcp {
+        reverse_proxy 127.0.0.1:8080
+    }
+    handle {
+        respond 404
+    }
+}
+```
+
+1. In Pocket ID **Administration → APIs**, add **Preview Controller** with the exact
+   HTTPS resource URL including `/mcp`. Create the API permission
+   `preview:operate`. Under **Access → Metadata document clients**, grant that
+   permission to the native clients. Restrict Pocket ID’s `CIMD_URL_ALLOWLIST`
+   to the client metadata URLs you use. Claude Code uses
+   `https://claude.ai/oauth/claude-code-client-metadata`. Codex can use
+   `https://chatgpt.com/oauth/codex/client.json` or a callback-specific URL.
+   If Pocket ID rejects the client, compare the exact requested `client_id`
+   with the allowlist.
+2. Add the following object to the controller settings. Copy `issuer` and
+   `jwks_uri` from the issuer’s `/.well-known/openid-configuration`. Use each
+   operator’s immutable Pocket ID user ID for `operator_subjects`. The
+   controller must trust the certificate at the signing-key URL. It supports
+   RS256 (the Pocket ID default), ES256 and EdDSA.
+
+```json
+"mcp_oauth": {
+  "issuer": "https://pocket-id.example.net",
+  "jwks_uri": "https://pocket-id.example.net/.well-known/jwks.json",
+  "resource": "https://mcp.example.net/mcp",
+  "operator_subjects": ["<Pocket ID user ID>"]
+}
+```
+
+3. Restart the controller. From the workstation, request `/mcp` without
+   credentials. Its 401 challenge links to the protected-resource metadata.
+   Check that the metadata advertises the exact HTTPS resource and issuer.
+   Verify the MCP hostname returns 404 for the dashboard and REST paths.
+4. Remove any deployment-token header or bearer environment setting from the
+   client's MCP entry. In Codex, run `codex mcp add preview --url https://mcp.example.net/mcp`
+   and `codex mcp login preview`. In Claude Code, run
+   `claude mcp add --transport http preview https://mcp.example.net/mcp`,
+   then open `/mcp`, select **preview**, and authenticate. Complete the browser
+   passkey prompt and consent on the client workstation.
+5. Call `list_projects` in each client. Repeat after restarting the client and
+   after access-token expiry to verify refresh. A signed-in user outside the
+   allowlist should receive HTTP 403. A 401 with a token can indicate expiry,
+   the wrong issuer or audience, or a signing key the controller cannot verify.
+   A 403 can also indicate a missing `preview:operate` grant.
+
+Each allowed subject has all seven tools, including permanent removal. The
+controller logs the issuer and subject for deployment and removal calls.
+In OAuth mode the shared deployment token works only on the private REST API.
+To offboard an operator, remove their subject and restart the controller.
+This denies their next MCP request even with an unexpired token. An empty
+subject list denies everyone. Also revoke their Pocket ID grant or disable the
+user as appropriate, and verify refresh and reauthentication in both clients.
+The controller validates signed tokens locally, so issuer-side revocation alone
+can leave an existing token usable until it expires.
 
 ## Deployment API
 
