@@ -3,6 +3,7 @@ package deploy
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -20,13 +21,15 @@ import (
 )
 
 var (
-	ErrUnknownProject = errors.New("unknown project")
-	ErrInvalidIntent  = errors.New("intent must be positive")
-	ErrInvalidCommit  = errors.New("commit must be a full 40-character SHA")
-	ErrConflict       = errors.New("environment is busy or archived")
-	ErrBusy           = errors.New("deployment intake is busy")
-	ErrClosed         = errors.New("deployment intake is closed")
-	commitPattern     = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
+	ErrRequestKey      = errors.New("request_id must be 1 to 128 bytes")
+	ErrRequestMismatch = errors.New("request_id already used for a different commit")
+	ErrUnknownProject  = errors.New("unknown project")
+	ErrInvalidIntent   = errors.New("intent must be positive")
+	ErrInvalidCommit   = errors.New("commit must be a full 40-character SHA")
+	ErrConflict        = errors.New("environment is busy or archived")
+	ErrBusy            = errors.New("deployment intake is busy")
+	ErrClosed          = errors.New("deployment intake is closed")
+	commitPattern      = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 )
 
 // Verifier checks that a commit object exists in the configured public repository.
@@ -35,6 +38,7 @@ type Verifier interface {
 }
 
 type Runner interface {
+	CleanupFailed(context.Context, string, int64, config.Project, state.Attempt, *state.Diagnostic) error
 	Run(context.Context, string, int64, config.Project, state.Attempt, runtime.Progress) (runtime.Result, error)
 	Cleanup(context.Context, string, int64, state.Attempt) error
 	HealthyPort(context.Context, state.Attempt, config.Project) (int, error)
@@ -90,6 +94,18 @@ func (s *Service) Submit(project string, intent int64, commit string) (state.Att
 }
 
 func (s *Service) SubmitWithIssueTitle(project string, intent int64, commit, title string) (state.Attempt, state.Environment, error) {
+	return s.submit(project, intent, commit, title, "")
+}
+
+// SubmitOnce persists the request identity with the attempt under the intake lock.
+func (s *Service) SubmitOnce(project string, intent int64, commit, requestID string) (state.Attempt, state.Environment, error) {
+	if strings.TrimSpace(requestID) == "" || len(requestID) > 128 {
+		return state.Attempt{}, state.Environment{}, ErrRequestKey
+	}
+	return s.submit(project, intent, commit, "", fmt.Sprintf("%x", sha256.Sum256([]byte(requestID))))
+}
+
+func (s *Service) submit(project string, intent int64, commit, title, keyHash string) (state.Attempt, state.Environment, error) {
 	projectCfg, ok := s.cfg.Projects[project]
 	if !ok {
 		return state.Attempt{}, state.Environment{}, ErrUnknownProject
@@ -110,7 +126,7 @@ func (s *Service) SubmitWithIssueTitle(project string, intent int64, commit, tit
 		return state.Attempt{}, state.Environment{}, ErrClosed
 	}
 	key := state.ID(project, intent)
-	if s.deleting[key] || s.running[key] {
+	if s.deleting[key] {
 		return state.Attempt{}, state.Environment{}, ErrConflict
 	}
 	env, err := s.store.Load(project, intent)
@@ -119,7 +135,17 @@ func (s *Service) SubmitWithIssueTitle(project string, intent int64, commit, tit
 	} else if err != nil {
 		return state.Attempt{}, state.Environment{}, err
 	}
-	if env.Deleting || env.DeleteAt != nil || env.LifecycleOperation != "" {
+	if keyHash != "" {
+		for _, a := range env.Attempts {
+			if a.RequestKeyHash == keyHash {
+				if !strings.EqualFold(a.Commit, commit) {
+					return state.Attempt{}, state.Environment{}, ErrRequestMismatch
+				}
+				return a, env, nil
+			}
+		}
+	}
+	if s.running[key] || env.Deleting || env.DeleteAt != nil || env.LifecycleOperation != "" {
 		return state.Attempt{}, state.Environment{}, ErrConflict
 	}
 	if len(env.Attempts) > 0 && inProgress(env.Attempts[len(env.Attempts)-1].Status) {
@@ -141,7 +167,7 @@ func (s *Service) SubmitWithIssueTitle(project string, intent int64, commit, tit
 		return state.Attempt{}, state.Environment{}, err
 	}
 	now := time.Now().UTC()
-	attempt := state.Attempt{Backend: projectCfg.DeploymentBackend(), ID: id, Commit: strings.ToLower(commit), IssueTitle: strings.TrimSpace(title), Status: state.Queued, CreatedAt: now, UpdatedAt: now}
+	attempt := state.Attempt{RequestKeyHash: keyHash, Backend: projectCfg.DeploymentBackend(), ID: id, Commit: strings.ToLower(commit), IssueTitle: strings.TrimSpace(title), Status: state.Queued, CreatedAt: now, UpdatedAt: now}
 	env.URL = url
 	env.Attempts = append(env.Attempts, attempt)
 	env.UpdatedAt = now
@@ -266,13 +292,15 @@ func (s *Service) verify(project string, intent int64, id, repository, commit st
 	previous, err := s.activate(project, intent, candidate, result)
 	if err != nil {
 		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		cleanupErr := s.runner.Cleanup(cleanup, project, intent, candidate)
+		diagnostic := &state.Diagnostic{Stage: state.CutoverStage, Summary: "Could not activate the candidate."}
+		candidate.ComposeProject = result.ComposeProject
+		cleanupErr := s.runner.CleanupFailed(cleanup, project, intent, s.cfg.Projects[project], candidate, diagnostic)
 		cancel()
 		message := "proxy cutover failed: " + bounded(err.Error())
 		if cleanupErr != nil {
 			message += "; cleanup: " + bounded(cleanupErr.Error())
 		}
-		if updateErr := s.recordFailure(project, intent, id, message, &state.Diagnostic{Stage: state.CutoverStage, Summary: "Could not activate the candidate."}); updateErr != nil {
+		if updateErr := s.recordFailure(project, intent, id, message, diagnostic); updateErr != nil {
 			slog.Error("record cutover failure", "deployment", id, "error", updateErr)
 		}
 		return
@@ -490,6 +518,9 @@ func (s *Service) updateWithResult(project string, intent int64, id string, stat
 				diagnostic := *result.Diagnostic
 				if token := s.cfg.Token(); token != "" && strings.Contains(diagnostic.Output, token) {
 					diagnostic.Output = ""
+				}
+				if token := s.cfg.Token(); token != "" && strings.Contains(diagnostic.ServiceOutput, token) {
+					diagnostic.ServiceOutput = ""
 				}
 				if env.Diagnostics == nil {
 					env.Diagnostics = make(map[string]state.Diagnostic)

@@ -138,6 +138,30 @@ The dashboard shows each deadline and offers Archive, Restore, and Delete.
 Delete starts permanent cleanup immediately. Cleanup removes identifiable
 preview-owned build tags and retains shared images.
 
+## Coding agents (MCP)
+
+Connect a Streamable HTTP MCP client to `/mcp` on the controller’s management
+address. Configure the client to send `Authorization: Bearer <deployment-token>`
+on every request. The same credential grants access to all seven tools.
+
+Use `list_projects` to match the checkout’s Git remote to a configured project
+ID, including before its first preview. Use `list_previews` or `get_preview`
+to inspect existing previews. To deploy, call `deploy_preview` with the project
+ID, positive Intent number, full approved commit SHA, and a unique `request_id`.
+Reuse that ID when retrying a lost response. Choose a new ID for a deliberate
+redeployment. Retry identities are scoped to the project and Intent and last
+for the lifetime of its deployment history.
+
+Poll `get_deployment` with the returned deployment ID. Require that specific attempt to report `healthy`. Before reporting ready,
+call `get_preview` and confirm `active_commit` matches the requested SHA. The
+stable URL may still serve the previous revision during or after a failed
+replacement. Use `get_deployment_logs` for the exact attempt’s retained
+diagnostics and bounded service output, when available. Failed attempts retain
+up to 8 KiB of service output before cleanup under the existing diagnostic
+retention policy. Projects with configured Compose environment values suppress
+persisted output. Use `remove_preview`
+to permanently remove the environment and its history.
+
 ## Deployment API
 
 The management API and operator dashboard are restricted to the configured home-lab listener.

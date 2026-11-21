@@ -31,6 +31,9 @@ func (f fakeRunner) Run(_ context.Context, _ string, _ int64, _ config.Project, 
 	return result, f.err
 }
 
+func (f fakeRunner) CleanupFailed(ctx context.Context, project string, intent int64, _ config.Project, a state.Attempt, _ *state.Diagnostic) error {
+	return f.Cleanup(ctx, project, intent, a)
+}
 func (f fakeRunner) Cleanup(context.Context, string, int64, state.Attempt) error {
 	return f.cleanupErr
 }
@@ -511,4 +514,36 @@ func TestPreviewRouteUsesLatestAttemptUntilCutover(t *testing.T) {
 	check(12345, "", "Active ticket")
 	env.Attempts[2].Status = state.Failed
 	check(12345, "", "Active ticket")
+}
+
+func TestDeploymentRequestIdentitySurvivesRestart(t *testing.T) {
+	root := t.TempDir()
+	store, err := state.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig(root)
+	first, err := New(cfg, store, fakeVerifier{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := strings.Repeat("a", 40)
+	original, _, err := first.SubmitOnce("myproject", 54, commit, "request-1")
+	first.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(cfg, store, fakeVerifier{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Close()
+	replay, env, err := second.SubmitOnce("myproject", 54, strings.ToUpper(commit), "request-1")
+	if err != nil || replay.ID != original.ID || len(env.Attempts) != 1 {
+		t.Fatalf("replay got %v, %v", replay, err)
+	}
+	_, _, err = second.SubmitOnce("myproject", 54, strings.Repeat("b", 40), "request-1")
+	if !errors.Is(err, ErrRequestMismatch) {
+		t.Fatalf("changed candidate got %v", err)
+	}
 }
