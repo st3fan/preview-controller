@@ -49,6 +49,7 @@ func (d *detailView) buildActivity() {
 	}
 	if d.GitHub.Intent != nil {
 		d.addIssueActivity(*d.GitHub.Intent)
+		d.addIntentStateActivity(*d.GitHub.Intent)
 		for _, issue := range d.GitHub.Related {
 			d.addIssueActivity(issue)
 		}
@@ -60,6 +61,38 @@ func (d *detailView) buildActivity() {
 	slices.SortStableFunc(d.Activity, func(a, b activityEvent) int {
 		return a.At.Compare(b.At)
 	})
+}
+
+func (d *detailView) addIntentStateActivity(issue githubmeta.Issue) {
+	history := issue.TimelineItems
+	if history == nil {
+		d.ActivityPartial = true
+		return
+	}
+	d.ActivityPartial = d.ActivityPartial || history.PageInfo.HasPreviousPage
+	issueLink := fmt.Sprintf("%s/issues/%d", d.RepositoryURL, issue.Number)
+	for _, event := range history.Nodes {
+		if event == nil || event.CreatedAt.IsZero() {
+			d.ActivityPartial = true
+			continue
+		}
+		link := issueLink
+		var action string
+		switch event.Type {
+		case "ClosedEvent":
+			action = "closed"
+			base, suffix, ok := strings.Cut(event.URL, "#event-")
+			if ok && strings.EqualFold(base, issueLink) && suffix != "" && strings.Trim(suffix, "0123456789") == "" {
+				link += "#event-" + suffix
+			}
+		case "ReopenedEvent":
+			action = "reopened"
+		default:
+			d.ActivityPartial = true
+			continue
+		}
+		d.addActivity(event.CreatedAt, "GitHub", fmt.Sprintf("Issue #%d %s", issue.Number, action), link, issue.Title)
+	}
 }
 
 func (d *detailView) addIssueActivity(issue githubmeta.Issue) {

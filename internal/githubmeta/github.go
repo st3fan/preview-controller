@@ -17,6 +17,15 @@ const query = `query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     issue(number: $number) {
       ...IssueFields
+      stateReason closedAt
+      timelineItems(last: 20, itemTypes: [CLOSED_EVENT, REOPENED_EVENT]) {
+        pageInfo { hasPreviousPage }
+        nodes {
+          __typename
+          ... on ClosedEvent { createdAt url }
+          ... on ReopenedEvent { createdAt }
+        }
+      }
       subIssues(first: 20) {
         pageInfo { hasNextPage }
         nodes { ...IssueFields }
@@ -80,8 +89,17 @@ type Issue struct {
 	Title                          string
 	State                          string
 	CreatedAt                      time.Time
+	StateReason                    string
+	ClosedAt                       *time.Time
+	TimelineItems                  *connection[IssueEvent]
 	Repository                     repository
 	ClosedByPullRequestsReferences *connection[Pull]
+}
+
+type IssueEvent struct {
+	Type      string `json:"__typename"`
+	CreatedAt time.Time
+	URL       string
 }
 
 type Review struct {

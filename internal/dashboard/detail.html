@@ -43,6 +43,18 @@
       <div class="inside">
       {{with .GitHub.Intent}}
       <p>Intent <a href="{{$.IssueURL}}" target="_blank" rel="noopener">#{{.Number}}{{template "new-tab"}}</a> · {{.State}}</p>
+      <p>These durations measure calendar time. The first linked PR opening is an estimate of when work started.</p>
+      <dl class="timing">
+        {{if not .CreatedAt.IsZero}}<div><dt>Intent opened</dt><dd>{{template "attempt-time" .CreatedAt}}</dd></div>{{end}}
+        {{if and (eq .State "CLOSED") (eq .StateReason "COMPLETED")}}
+        {{with .ClosedAt}}{{if not .IsZero}}<div><dt>Intent closed as completed</dt><dd>{{template "attempt-time" .}}</dd></div>{{end}}{{end}}
+        {{end}}
+        <div><dt>Elapsed time from Intent opening to completed closure</dt><dd>{{$.IntentCompletionTiming}}</dd></div>
+        {{with $.FirstLinkedPull}}
+        <div><dt>First linked PR opened</dt><dd><a href="{{$.RepositoryURL}}/pull/{{.Number}}" target="_blank" rel="noopener">#{{.Number}}{{template "new-tab"}}</a> · {{template "attempt-time" .CreatedAt}}</dd></div>
+        <div><dt>Elapsed time to first linked PR</dt><dd>{{elapsedTime $.GitHub.Intent.CreatedAt .CreatedAt}}</dd></div>
+        {{else}}<div><dt>Elapsed time to first linked PR</dt><dd>Timing unavailable</dd></div>{{end}}
+      </dl>
       <h3>Related issues</h3>
       {{if $.GitHub.Related}}
       <ul>
@@ -53,14 +65,6 @@
       {{else if $.GitHub.Partial}}<p>Related issues unavailable.</p>
       {{else}}<p>No linked sub-issues.</p>{{end}}
       <h3>Pull requests</h3>
-      <p>The first linked PR opening is an estimate of when work started. These durations measure calendar time.</p>
-      <dl class="timing">
-        {{if not .CreatedAt.IsZero}}<div><dt>Intent opened</dt><dd>{{template "attempt-time" .CreatedAt}}</dd></div>{{end}}
-        {{with $.FirstLinkedPull}}
-        <div><dt>First linked PR opened</dt><dd><a href="{{$.RepositoryURL}}/pull/{{.Number}}" target="_blank" rel="noopener">#{{.Number}}{{template "new-tab"}}</a> · {{template "attempt-time" .CreatedAt}}</dd></div>
-        <div><dt>Elapsed time to first linked PR</dt><dd>{{elapsedTime $.GitHub.Intent.CreatedAt .CreatedAt}}</dd></div>
-        {{else}}<div><dt>Elapsed time to first linked PR</dt><dd>Timing unavailable</dd></div>{{end}}
-      </dl>
       {{if $.GitHub.Pulls}}
       {{if $.GitHub.Ordered}}<ol>{{else}}<p>Stack order unavailable.</p><ul>{{end}}
         {{range $.GitHub.Pulls}}
@@ -76,7 +80,7 @@
       {{else if $.GitHub.Partial}}<p>Linked pull requests unavailable.</p>
       {{else}}<p>No linked pull requests.</p>{{end}}
       {{if $.GitHub.Partial}}<p>GitHub returned incomplete results.</p>{{end}}
-      {{else}}<p>GitHub metadata unavailable.</p><p>Elapsed time to first linked PR is unavailable.</p>{{end}}
+      {{else}}<p>GitHub metadata unavailable.</p><p>Elapsed time to first linked PR is unavailable. Intent completion timing is unavailable.</p>{{end}}
       <p><a href="#activity">Activity timeline</a></p>
       </div>
     </section>
