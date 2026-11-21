@@ -33,6 +33,7 @@ func (a detailAttempt) TimeToPreview() string {
 }
 
 type detailView struct {
+	Host        hostSnapshot
 	BackendName string
 	state.Environment
 	Health                    health.Observation
@@ -53,15 +54,15 @@ func liveActionsAvailable(env state.Environment) bool {
 	return !env.Deleting && env.DeleteAt == nil && env.LifecycleOperation == ""
 }
 
-func RegisterDetail(mux *http.ServeMux, cfg config.Config, load func(string, int64) (state.Environment, error), monitor *health.Monitor) {
+func registerDetailPage(mux *http.ServeMux, sample func() hostSnapshot, cfg config.Config, load func(string, int64) (state.Environment, error), monitor *health.Monitor) {
 	var lookup func(context.Context, string, int64) githubmeta.Result
 	if token := os.Getenv(cfg.GitHubTokenEnv); strings.TrimSpace(token) != "" {
 		lookup = githubmeta.New(token).Lookup
 	}
-	registerDetail(mux, cfg, load, monitor, lookup)
+	registerDetail(mux, sample, cfg, load, monitor, lookup)
 }
 
-func registerDetail(mux *http.ServeMux, cfg config.Config, load func(string, int64) (state.Environment, error), monitor *health.Monitor, lookup func(context.Context, string, int64) githubmeta.Result) {
+func registerDetail(mux *http.ServeMux, sample func() hostSnapshot, cfg config.Config, load func(string, int64) (state.Environment, error), monitor *health.Monitor, lookup func(context.Context, string, int64) githubmeta.Result) {
 	mux.HandleFunc("GET /dashboard/previews/{project}/{intent}", func(w http.ResponseWriter, r *http.Request) {
 		project := r.PathValue("project")
 		intent, err := strconv.ParseInt(r.PathValue("intent"), 10, 64)
@@ -118,6 +119,7 @@ func registerDetail(mux *http.ServeMux, cfg config.Config, load func(string, int
 			}
 		}
 		data.buildActivity()
+		data.Host = sample()
 		var page bytes.Buffer
 		if err := templates.ExecuteTemplate(&page, "detail", data); err != nil {
 			http.Error(w, "Could not render preview", http.StatusInternalServerError)

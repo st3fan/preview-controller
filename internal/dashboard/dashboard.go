@@ -56,6 +56,7 @@ type project struct {
 }
 
 type view struct {
+	Host          hostSnapshot
 	Unavailable   bool
 	Projects      []project
 	Archived      []project
@@ -72,15 +73,17 @@ func appendEnvironment(groups []project, row environment) []project {
 	return groups
 }
 
-func Register(mux *http.ServeMux, shutdown context.Context, cfg config.Config, list func() ([]state.Environment, error), changes func() <-chan struct{}, monitor *health.Monitor) {
+func Register(mux *http.ServeMux, shutdown context.Context, cfg config.Config, detail func(string, int64) (state.Environment, error), list func() ([]state.Environment, error), changes func() <-chan struct{}, monitor *health.Monitor) {
 	titles := newIssueTitles()
 	if token := strings.TrimSpace(os.Getenv(cfg.GitHubTokenEnv)); token != "" {
 		go titles.run(shutdown, cfg.Projects, list, changes, githubmeta.New(token).LookupTitle)
 	}
-	registerDashboard(mux, shutdown, cfg.Projects, list, changes, monitor, titles)
+	sample := newHostSampler(cfg.WorkspaceRoot)
+	registerDetailPage(mux, sample, cfg, detail, monitor)
+	registerDashboard(mux, sample, shutdown, cfg.Projects, list, changes, monitor, titles)
 }
 
-func registerDashboard(mux *http.ServeMux, shutdown context.Context, projects map[string]config.Project, list func() ([]state.Environment, error), changes func() <-chan struct{}, monitor *health.Monitor, titles *issueTitles) {
+func registerDashboard(mux *http.ServeMux, sample func() hostSnapshot, shutdown context.Context, projects map[string]config.Project, list func() ([]state.Environment, error), changes func() <-chan struct{}, monitor *health.Monitor, titles *issueTitles) {
 	load := func() view {
 		envs, err := list()
 		if err != nil {
@@ -139,6 +142,7 @@ func registerDashboard(mux *http.ServeMux, shutdown context.Context, projects ma
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
 		var page bytes.Buffer
 		data := load()
+		data.Host = sample()
 		if err := templates.ExecuteTemplate(&page, "page", data); err != nil {
 			http.Error(w, "Could not render dashboard", http.StatusInternalServerError)
 			return
@@ -156,7 +160,16 @@ func registerDashboard(mux *http.ServeMux, shutdown context.Context, projects ma
 		}
 		stream(w, r, shutdown, load, changes, monitor.Changes, titles.changes)
 	})
-	for _, name := range []string{"htmx-2.0.11.min.js", "sse-2.2.4.js", "dashboard.css", "theme.js", "delete.js", "trash.svg", "icons.svg", "bootstrap-reboot-5.3.8.min.css"} {
+	mux.HandleFunc("GET /dashboard/host", func(w http.ResponseWriter, r *http.Request) {
+		setPageHeaders(w)
+		var fragment bytes.Buffer
+		if err := templates.ExecuteTemplate(&fragment, "host-values", sample()); err != nil {
+			http.Error(w, "Could not render host readings", http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(fragment.Bytes())
+	})
+	for _, name := range []string{"host.js", "htmx-2.0.11.min.js", "sse-2.2.4.js", "dashboard.css", "theme.js", "delete.js", "trash.svg", "icons.svg", "bootstrap-reboot-5.3.8.min.css"} {
 		mux.HandleFunc("GET /dashboard/assets/"+name, func(w http.ResponseWriter, r *http.Request) {
 			http.ServeFileFS(w, r, files, "assets/"+name)
 		})
