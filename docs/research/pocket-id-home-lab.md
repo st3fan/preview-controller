@@ -1,12 +1,12 @@
-# Try Pocket ID with Codex and Claude Code in an Arcane home lab
+# Set up Pocket ID in Arcane with Caddy on the host
 
-This trial uses local Pocket ID users and passkeys. Arcane runs Pocket ID and a disposable notes MCP server. Caddy runs directly on the same Linux host and handles HTTPS. The notes server lets you test both clients today. Preview Controller still expects its shared token until [#72](https://github.com/st3fan/preview-controller/issues/72) adds OAuth support to the existing binary. [Pocket ID’s upstream demo](https://github.com/pocket-id/mcp-oauth-demo/tree/8a1dbf50038c6558bf509072083f699a8d2bc49f)
+Arcane runs one Pocket ID container, and Caddy runs directly on the same Linux host. You can enroll a local passkey user and verify sign-in now. Test the coding agents once a Preview Controller build with [#72](https://github.com/st3fan/preview-controller/issues/72) is deployed.
 
 ## 1. Create the Arcane project
 
-Choose two private DNS names that resolve to the Caddy host from your workstation. The examples use `pocket-id.example.net` for the issuer and `notes-mcp.example.net` for the demo. Give both names trusted HTTPS certificates using your usual Caddy setup. Pick a stable issuer name before enrolling a passkey, because the browser binds it to the domain. Pocket ID needs outbound HTTPS to fetch client metadata. The Docker builder needs access to GitHub, the build images and Go dependencies. [Pocket ID installation](https://pocket-id.org/docs/setup/installation)
+Choose a stable DNS name for Pocket ID that resolves to the Caddy host from your workstation. This example uses `pocket-id.example.net`. Use your usual trusted HTTPS certificate. Passkeys are bound to the issuer’s domain. [Pocket ID installation](https://pocket-id.org/docs/setup/installation)
 
-In **Projects → Create Project**, select the Arcane agent on the Caddy host. Name the project `pocket-id-lab` and paste this Compose file. It publishes two loopback ports and uses Compose’s default network. The demo builds from the upstream Dockerfile in the pinned repository’s `mcp-server` directory. [Arcane projects](https://getarcane.app/docs/docker/projects)
+In **Projects → Create Project**, select the Arcane agent on the Caddy host. Name the project `pocket-id-lab` and paste this Compose file. [Arcane projects](https://getarcane.app/docs/docker/projects)
 
 ```yaml
 services:
@@ -28,83 +28,60 @@ services:
       timeout: 5s
       retries: 5
 
-  notes-mcp:
-    build:
-      context: "https://github.com/pocket-id/mcp-oauth-demo.git#8a1dbf50038c6558bf509072083f699a8d2bc49f:mcp-server"
-    restart: unless-stopped
-    depends_on:
-      pocket-id:
-        condition: service_healthy
-    environment:
-      MCP_RESOURCE_URL: ${NOTES_MCP_URL:?Set NOTES_MCP_URL}
-      OAUTH_ISSUER_URL: ${POCKET_ID_URL:?Set POCKET_ID_URL}
-      OAUTH_JWKS_URL: http://pocket-id:1411/.well-known/jwks.json
-      OAUTH_REQUIRED_SCOPES: notes:read
-    ports:
-      - "127.0.0.1:18111:8080"
-
 volumes:
   pocket-id-data: {}
 ```
 
-Choose **Add .env file**. Replace the hostnames and generate a fresh encryption key locally with `openssl rand -base64 32`. Save the key privately along with backups of the named volume. Pocket ID stores its SQLite database there. Choose **Create Project → Build & Deploy**. [Pocket ID configuration](https://pocket-id.org/docs/configuration/environment-variables)
+Choose **Add .env file**. Replace the hostname and generate a fresh encryption key locally with `openssl rand -base64 32`. Save the key privately along with backups of the named volume. Pocket ID stores its SQLite database there. Choose **Create Project → Up**. [Pocket ID configuration](https://pocket-id.org/docs/configuration/environment-variables)
 
 ```dotenv
 POCKET_ID_URL=https://pocket-id.example.net
-NOTES_MCP_URL=https://notes-mcp.example.net/mcp
 POCKET_ID_ENCRYPTION_KEY=<paste-your-generated-key>
 CIMD_URL_ALLOWLIST='["https://claude.ai/oauth/claude-code-client-metadata","https://chatgpt.com/oauth/codex/client.json"]'
 ```
 
-## 2. Point host Caddy at the loopback ports
+## 2. Connect host Caddy and verify the issuer
 
-Add these sites to the host’s existing Caddyfile, using your chosen names and TLS settings. Validate and reload Caddy using your usual host service commands. Keep access within your LAN/VPN during setup. [Pocket ID behind Caddy](https://pocket-id.org/docs/setup/reverse-proxy)
+Add this site to your existing Caddyfile, substituting your DNS name and usual TLS settings. Validate and reload Caddy through your normal host service workflow. Keep the setup page reachable only from your trusted LAN/VPN. [Pocket ID behind Caddy](https://pocket-id.org/docs/setup/reverse-proxy)
 
 ```caddyfile
 pocket-id.example.net {
     reverse_proxy 127.0.0.1:1411
 }
-
-notes-mcp.example.net {
-    reverse_proxy 127.0.0.1:18111
-}
 ```
 
-From the workstation where you run the agents, check these three URLs. Expect the Pocket ID issuer to equal `POCKET_ID_URL`, the notes metadata to name the exact notes URL and issuer, and the unauthenticated MCP request to return **401** with a `WWW-Authenticate` header pointing to resource metadata.
+From your workstation, check that `issuer` matches `POCKET_ID_URL` and that discovery returns an HTTPS signing-key URL.
 
 ```sh
 curl -fsS https://pocket-id.example.net/.well-known/openid-configuration | jq '{issuer, jwks_uri, client_id_metadata_document_supported}'
-curl -fsS https://notes-mcp.example.net/.well-known/oauth-protected-resource/mcp | jq '{resource, authorization_servers, scopes_supported}'
-curl -si https://notes-mcp.example.net/mcp
 ```
 
-## 3. Create your local account and authorize the notes API
+## 3. Verify local passkey sign-in
 
-1. Open `https://pocket-id.example.net/setup`, create your local administrator account and enroll a passkey. Sign in again in a private browser window to confirm it works. For a separate operator account, create a local user under **Administration → Users** and use its one-time login link to enroll that user's passkey. [Pocket ID installation](https://pocket-id.org/docs/setup/installation)
-2. Open **Administration → APIs → Add API**. Use `Notes MCP trial` as its name and the exact `NOTES_MCP_URL`, including `/mcp`, as the **API resource**.
-3. Add permission `notes:read` with display name `Read notes`. Under **Access → Metadata document clients**, enable **Allow all metadata document clients**, grant `notes:read`, and save. The instance-level URL allowlist in Compose limits which client documents Pocket ID accepts. This trial exercises only the demo’s read tool. [Upstream API setup](https://github.com/pocket-id/mcp-oauth-demo/tree/8a1dbf50038c6558bf509072083f699a8d2bc49f#3-configure-pocket-id)
+Open `https://pocket-id.example.net/setup`, create your local administrator account and enroll a passkey. Sign in again in a private browser window. To create a separate operator, open **Administration → Users**, create the user and use its one-time login link to enroll its passkey. A successful sign-in completes the standalone Pocket ID setup. [Pocket ID installation](https://pocket-id.org/docs/setup/installation)
 
-## 4. Test each agent from your workstation
+## After #72: test Preview Controller
 
-**Claude Code.** Register the notes URL from your project directory:
+Once the OAuth-enabled controller is deployed, follow its release instructions to configure the Pocket ID issuer and grant your operator access by issuer and subject. Use the controller’s exact HTTPS MCP URL wherever this section shows `https://mcp.example.net/mcp`. Keep the management listener private.
+
+1. In Pocket ID, open **Administration → APIs → Add API**. Name it **Preview Controller**. Set **API resource** to the exact controller URL including `/mcp`. Add the permissions specified by the implementation. Under **Access → Metadata document clients**, enable access for the allowlisted clients and grant the permissions required for `list_projects`. Pocket ID needs outbound HTTPS to fetch each client’s metadata.
+2. From the workstation, request the MCP endpoint without credentials. Expect HTTP 401 and a `WWW-Authenticate` header with a `resource_metadata` URL. Fetch that URL and confirm its `resource` matches the controller URL and its `authorization_servers` includes your Pocket ID issuer.
+
+### Codex
 
 ```sh
-claude mcp add --transport http pocket-notes https://notes-mcp.example.net/mcp
+codex mcp add preview --url https://mcp.example.net/mcp
+codex mcp login preview
 ```
 
-Start Claude Code in that directory, open `/mcp`, select **pocket-notes** and authenticate. In the browser, use your Pocket ID passkey and approve read access. Ask Claude to **call the pocket-notes list_notes tool and show its result**. A successful empty list is expected for a new user. Check that the tool was actually invoked. [Claude Code MCP](https://code.claude.com/docs/en/mcp)
+Approve the request in your browser with your Pocket ID passkey. Start a fresh Codex session and ask it to **call the preview server’s list_projects tool and show the result**. If Pocket ID rejects the client ID, check the authorization request’s `client_id` locally. Codex can use the server-specific form `https://chatgpt.com/oauth/codex/<callback_id>/client.json`. If it does, add that exact URL to the existing `CIMD_URL_ALLOWLIST` in Arcane, redeploy Pocket ID and retry. [Codex MCP guide](https://developers.openai.com/codex/mcp/)
 
-**Codex.** Register the same URL and start native login:
+### Claude Code
 
 ```sh
-codex mcp add pocket-notes --url https://notes-mcp.example.net/mcp
-codex mcp login pocket-notes --scopes notes:read,offline_access
+claude mcp add --transport http preview https://mcp.example.net/mcp
 ```
 
-Approve in your browser. Start a fresh Codex session and ask it to **call the pocket-notes list_notes tool and show its result**. Codex may select a server-specific metadata URL depending on the issuer’s discovery flags. If Pocket ID rejects the client, inspect the authorization request’s `client_id` locally. If it is the documented `https://chatgpt.com/oauth/codex/<callback_id>/client.json` form, add that **exact** URL to the JSON allowlist in Arcane, redeploy, then retry login. Keep the other entries. To diagnose registration specifically, retry with `--oauth-client-registration cimd`. Pocket ID publishes a Claude Code walkthrough. Codex interoperability is a trial outcome. [Codex login and registration](https://developers.openai.com/codex/mcp/)
+Start Claude Code in the same project directory. Open `/mcp`, select **preview** and authenticate with your Pocket ID passkey in the browser. Ask Claude to **call the preview server’s list_projects tool and show the result**. [Claude Code MCP guide](https://code.claude.com/docs/en/mcp)
 
-**Check persistence and refresh.** Record each CLI version and whether login and the read succeeded. Restart each client and repeat the read. Repeat again after the access-token lifetime shown for that client in Pocket ID. A read that succeeds without another browser prompt after expiry is the refresh check. An `invalid_target` error points to the resource URL, including its path. A scope error warrants checking the API permission, client access grant and consent. Use the Pocket ID audit log for sign-in failures. Keep callback URLs and tokens private.
-
-## 5. Use Preview Controller after #72
-
-The notes test exercises the IdP and client flow. Once the controller supplies OAuth discovery, audience validation and the operator allowlist, register its **own** canonical HTTPS MCP URL as a separate API with the controller’s documented permissions. Configure the Pocket ID issuer and the operator's subject in the controller, add the controller in each agent under a different name, and call `list_projects`. Verify a second local user without an operator grant is denied. Keep the management dashboard on its private listener. After the trial you can remove the notes service and its Caddy site while retaining the Pocket ID volume and encryption key.
+In each client, verify the tool call succeeded and returned the controller’s project list. Restart the client and repeat. Repeat once more after the access token expires to check refresh without a new login prompt. With a second local user who lacks a controller operator grant, verify that authentication succeeds and the controller denies tool access.
