@@ -37,7 +37,7 @@ type Verifier interface {
 type Runner interface {
 	Run(context.Context, string, int64, config.Project, state.Attempt, runtime.Progress) (runtime.Result, error)
 	Cleanup(context.Context, string, int64, state.Attempt) error
-	Check(context.Context, state.Attempt, config.Project) (bool, error)
+	HealthyPort(context.Context, state.Attempt, config.Project) (int, error)
 }
 
 type Service struct {
@@ -294,12 +294,12 @@ func (s *Service) activate(project string, intent int64, candidate state.Attempt
 	checked := candidate
 	checked.Port = result.Port
 	ctx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
-	alive, err := s.runner.Check(ctx, checked, s.cfg.Projects[project])
+	port, err := s.runner.HealthyPort(ctx, checked, s.cfg.Projects[project])
 	cancel()
 	if err != nil {
 		return state.Attempt{}, err
 	}
-	if !alive {
+	if port == 0 {
 		return state.Attempt{}, errors.New("candidate failed its cutover health check")
 	}
 	s.mu.Lock()
@@ -326,7 +326,7 @@ func (s *Service) activate(project string, intent int64, candidate state.Attempt
 			activatedAt := time.Now().UTC()
 			env.Attempts[i].Status = state.Healthy
 			env.Attempts[i].ActivatedAt = &activatedAt
-			env.Attempts[i].Port = result.Port
+			env.Attempts[i].Port = port
 			env.Attempts[i].Workspace = result.Workspace
 			env.Attempts[i].ComposeProject = result.ComposeProject
 			env.Attempts[i].UpdatedAt = activatedAt
@@ -538,18 +538,24 @@ func (s *Service) reconcile() error {
 			if attempt.Status == state.Healthy && s.runner != nil && !env.Deleting && env.DeleteAt == nil && env.LifecycleOperation == "" && attempt.ID == env.ActiveDeploymentID {
 				if projectCfg, ok := s.cfg.Projects[env.Project]; ok {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					alive, err := s.runner.Check(ctx, *attempt, projectCfg)
+					port, err := s.runner.HealthyPort(ctx, *attempt, projectCfg)
 					cancel()
 					if err != nil {
 						slog.Error("inspect previous runtime", "deployment", attempt.ID, "error", err)
 					}
-					if err != nil || !alive {
+					if err != nil || port == 0 {
 						now := time.Now().UTC()
 						attempt.Status = state.Failed
 						attempt.Error = "runtime was not healthy after controller restart"
 						attempt.UpdatedAt = now
 						env.ActiveDeploymentID = ""
 						env.ActiveCommit = ""
+						env.UpdatedAt = now
+						changed = true
+					} else if attempt.Port != port {
+						now := time.Now().UTC()
+						attempt.Port = port
+						attempt.UpdatedAt = now
 						env.UpdatedAt = now
 						changed = true
 					}

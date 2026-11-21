@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -95,17 +96,48 @@ func inferTCPPort(exposed string) (int, error) {
 
 var errPublicPort = errors.New("set public_port when the built image does not expose exactly one TCP port")
 
-// Only one TCP port is published by launch. Its mapping can change on restart.
+// HostConfig.PortBindings retains the controller's --publish request across
+// restarts. NetworkSettings.Ports contains the daemon's current host mapping.
 func (r dockerBackend) endpoint(ctx context.Context, id string) (int, error) {
-	out, err := r.docker(ctx, 1024, "port", id)
+	const format = `{"running":{{json .State.Running}},"requested":{{json .HostConfig.PortBindings}},"active":{{json .NetworkSettings.Ports}}}`
+	out, err := r.docker(ctx, 64<<10, "container", "inspect", "--format", format, id)
 	if err != nil {
 		return 0, err
 	}
-	_, binding, ok := strings.Cut(strings.TrimSpace(out), "/tcp -> ")
-	if !ok {
-		return 0, errors.New("missing published TCP port")
+	return mappedDockerPort(out)
+}
+
+func mappedDockerPort(metadata string) (int, error) {
+	type binding struct {
+		HostIP   string
+		HostPort string
 	}
-	return publishedPort(binding)
+	var ports struct {
+		Running           bool
+		Requested, Active map[string][]binding
+	}
+	if err := json.Unmarshal([]byte(metadata), &ports); err != nil {
+		return 0, err
+	}
+	if !ports.Running {
+		return 0, errors.New("web container is stopped")
+	}
+	if len(ports.Requested) > 1 {
+		return 0, errors.New("expected exactly one requested port mapping")
+	}
+	for target, request := range ports.Requested {
+		number, tcp := strings.CutSuffix(target, "/tcp")
+		internal, err := strconv.Atoi(number)
+		if !tcp || err != nil || internal < 1 || internal > 65535 || len(request) != 1 || request[0].HostIP != "127.0.0.1" {
+			return 0, errors.New("invalid requested loopback TCP mapping")
+		}
+		current := ports.Active[target]
+		if len(current) != 1 {
+			return 0, fmt.Errorf("missing or ambiguous published mapping for %s", target)
+		}
+		return publishedPort(net.JoinHostPort(current[0].HostIP, current[0].HostPort))
+	}
+	return 0, errors.New("missing requested port mapping")
 }
 
 func (r dockerBackend) container(ctx context.Context, a state.Attempt) (string, error) {
@@ -113,17 +145,12 @@ func (r dockerBackend) container(ctx context.Context, a state.Attempt) (string, 
 	return strings.TrimSpace(out), err
 }
 
-func (r dockerBackend) running(ctx context.Context, a state.Attempt) (bool, error) {
+func (r dockerBackend) currentPort(ctx context.Context, a state.Attempt) (int, error) {
 	id, err := r.container(ctx, a)
 	if err != nil || id == "" {
-		return false, err
+		return 0, err
 	}
-	status, err := r.docker(ctx, 1024, "inspect", "--format", "{{.State.Running}}", id)
-	if err != nil || strings.TrimSpace(status) != "true" {
-		return false, err
-	}
-	port, err := r.endpoint(ctx, id)
-	return err == nil && port == a.Port, err
+	return r.endpoint(ctx, id)
 }
 
 func (r dockerBackend) stop(ctx context.Context, a state.Attempt) error {

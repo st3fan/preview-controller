@@ -237,14 +237,14 @@ func (r *Runtime) removeBuildImages(ctx context.Context, project string) error {
 	return errors.Join(problems...)
 }
 
-func (r composeBackend) running(ctx context.Context, attempt state.Attempt) (bool, error) {
+func (r composeBackend) currentPort(ctx context.Context, attempt state.Attempt) (int, error) {
 	name := projectNameForAttempt(attempt)
 	output, err := r.docker(ctx, 64<<10, "container", "ls", "-q", "--filter", "label=com.docker.compose.project="+name, "--filter", "status=running")
 	if err != nil {
-		return false, err
+		return 0, err
 	}
 	if strings.TrimSpace(output) == "" {
-		return false, nil
+		return 0, nil
 	}
-	return true, nil
+	return attempt.Port, nil
 }

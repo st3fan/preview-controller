@@ -77,9 +77,9 @@ func TestComposeCandidateLifecycle(t *testing.T) {
 		t.Fatalf("invalid candidate result: %+v", result)
 	}
 	attempt.Port = result.Port
-	alive, err := runner.Check(ctx, attempt, project)
-	if err != nil || !alive {
-		t.Fatalf("healthy candidate check = %v, %v", alive, err)
+	healthyPort, err := runner.HealthyPort(ctx, attempt, project)
+	if err != nil || healthyPort != attempt.Port {
+		t.Fatalf("healthy candidate check = %v, %v", healthyPort, err)
 	}
 	redis := func(command ...string) (string, error) {
 		return runner.docker(ctx, 1024, append([]string{"exec", result.ComposeProject + "-db-1", "redis-cli"}, command...)...)
@@ -90,16 +90,16 @@ func TestComposeCandidateLifecycle(t *testing.T) {
 	if err := runner.Stop(ctx, attempt); err != nil {
 		t.Fatal(err)
 	}
-	if alive, err := runner.Check(ctx, attempt, project); err != nil || alive {
-		t.Fatalf("archived stack check = %v, %v", alive, err)
+	if healthyPort, err := runner.HealthyPort(ctx, attempt, project); err != nil || healthyPort != 0 {
+		t.Fatalf("archived stack check = %v, %v", healthyPort, err)
 	}
 	port, err := runner.Restore(ctx, "fixture", 1, config.Project{Backend: config.BackendDocker, HealthPath: "/"}, attempt)
 	if err != nil {
 		t.Fatal(err)
 	}
 	attempt.Port = port
-	if alive, err := runner.Check(ctx, attempt, project); err != nil || !alive {
-		t.Fatalf("restored stack check = %v, %v", alive, err)
+	if healthyPort, err := runner.HealthyPort(ctx, attempt, project); err != nil || healthyPort != attempt.Port {
+		t.Fatalf("restored stack check = %v, %v", healthyPort, err)
 	}
 	if value, err := redis("GET", "archive-test"); err != nil || strings.TrimSpace(value) != "saved" {
 		t.Fatalf("restored preview data = %q, %v", value, err)

@@ -13,7 +13,7 @@ import (
 // The controller owns persisted state, readiness probes and route activation.
 type deploymentBackend interface {
 	launch(context.Context, state.Attempt, config.Project, Result, Progress) (Result, error)
-	running(context.Context, state.Attempt) (bool, error)
+	currentPort(context.Context, state.Attempt) (int, error)
 	remove(context.Context, state.Attempt) error
 	stop(context.Context, state.Attempt) error
 	restore(context.Context, string, int64, config.Project, state.Attempt) (int, error)

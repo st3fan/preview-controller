@@ -22,6 +22,7 @@ import (
 	"github.com/st3fan/preview-controller/internal/config"
 	"github.com/st3fan/preview-controller/internal/deploy"
 	"github.com/st3fan/preview-controller/internal/gitverify"
+	"github.com/st3fan/preview-controller/internal/health"
 	"github.com/st3fan/preview-controller/internal/ingress"
 	"github.com/st3fan/preview-controller/internal/runtime"
 	"github.com/st3fan/preview-controller/internal/state"
@@ -32,11 +33,11 @@ type cutoverRunner struct {
 	failCommit string
 }
 
-func (r cutoverRunner) Check(ctx context.Context, attempt state.Attempt, project config.Project) (bool, error) {
+func (r cutoverRunner) HealthyPort(ctx context.Context, attempt state.Attempt, project config.Project) (int, error) {
 	if attempt.Commit == r.failCommit {
-		return false, nil
+		return 0, nil
 	}
-	return r.Runtime.Check(ctx, attempt, project)
+	return r.Runtime.HealthyPort(ctx, attempt, project)
 }
 
 // Run with -tags=integration -timeout=30m on a disposable Linux Docker host.
@@ -187,10 +188,11 @@ func testFullPreviewLifecycle(t *testing.T, backend string) {
 			t.Fatalf("preview = %d %q, want %q", w.Code, w.Body.String(), want)
 		}
 	}
+	var neighbor state.Attempt
 	firstAttempt := submit(123, first)
 	if backend == config.BackendDocker {
-		other := submit(124, second)
-		wait(124, other.ID, state.Healthy)
+		neighbor = submit(124, second)
+		wait(124, neighbor.ID, state.Healthy)
 	}
 	if env := wait(123, firstAttempt.ID, state.Healthy); env.ActiveCommit != first {
 		t.Fatalf("first active commit: %s", env.ActiveCommit)
@@ -240,11 +242,51 @@ func testFullPreviewLifecycle(t *testing.T, backend string) {
 	}
 	preview(123, "second")
 	service.Close()
+	var stale state.Environment
+	var correctPort int
+	if backend == config.BackendDocker {
+		stale, err = store.Load("fixture", 123)
+		if err != nil {
+			t.Fatal(err)
+		}
+		neighborEnv, err := store.Load("fixture", 124)
+		if err != nil {
+			t.Fatal(err)
+		}
+		other, ok := neighborEnv.ActivePreview()
+		if !ok {
+			t.Fatal("missing neighbor")
+		}
+		for i := range stale.Attempts {
+			a := &stale.Attempts[i]
+			if a.ID == secondAttempt.ID {
+				correctPort = a.Port
+				a.Port = other.Port
+			}
+		}
+		if correctPort == 0 || correctPort == other.Port {
+			t.Fatal("expected two distinct published ports")
+		}
+		if err := store.Save(stale); err != nil {
+			t.Fatal(err)
+		}
+	}
 	service, err = deploy.New(cfg, store, gitverify.Verifier{}, runner)
 	if err != nil {
 		t.Fatal(err)
 	}
 	preview(123, "second")
+	if backend == config.BackendDocker {
+		recovered, err := store.Load("fixture", 123)
+		if err != nil {
+			t.Fatal(err)
+		}
+		active, ok := recovered.ActivePreview()
+		if !ok || active.ID != secondAttempt.ID || active.Port != correctPort {
+			t.Fatalf("reconciled route = %+v, want %s at %d", active, secondAttempt.ID, correctPort)
+		}
+		checkPeriodicHealth(t, store, cfg, baseRunner, recovered, stale)
+	}
 	badAttempt := submit(123, bad)
 	if env := wait(123, badAttempt.ID, state.Failed); env.ActiveCommit != second {
 		t.Fatalf("failed candidate changed active commit: %s", env.ActiveCommit)
@@ -255,6 +297,13 @@ func testFullPreviewLifecycle(t *testing.T, backend string) {
 		t.Fatalf("failed cutover changed active commit: %s", env.ActiveCommit)
 	}
 	preview(123, "second")
+	if backend == config.BackendDocker {
+		// The ambiguous image fails after build; the rejected cutover fails after
+		// both its container and network exist.
+		verifyDockerCleanup(t, runner.Runtime, 123, badAttempt)
+		verifyDockerCleanup(t, runner.Runtime, 123, cutoverAttempt)
+		preview(124, "second")
+	}
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		err := service.DeleteEnvironment("fixture:123")
@@ -313,9 +362,58 @@ func testFullPreviewLifecycle(t *testing.T, backend string) {
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
+		verifyDockerCleanup(t, runner.Runtime, 124, neighbor)
 		preview(123, "bad")
 	}
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("deleted preview status = %d", w.Code)
+	}
+}
+
+func verifyDockerCleanup(t *testing.T, runner *runtime.Runtime, intent int64, a state.Attempt) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	assertGone := func() {
+		t.Helper()
+		for _, list := range [][]string{{"container", "ls", "-aq"}, {"network", "ls", "-q"}, {"image", "ls", "-aq"}} {
+			out, err := exec.CommandContext(ctx, "docker", append(list, "--filter", "label=preview-controller.attempt="+a.ID)...).CombinedOutput()
+			if err != nil || len(bytes.TrimSpace(out)) != 0 {
+				t.Fatalf("%v after cleanup of %s: %s (%v)", list, a.ID, out, err)
+			}
+		}
+	}
+	assertGone()
+	if err := runner.Cleanup(ctx, "fixture", intent, a); err != nil {
+		t.Fatal(err)
+	}
+	assertGone()
+}
+
+func checkPeriodicHealth(t *testing.T, store *state.Store, cfg config.Config, r *runtime.Runtime, recovered, stale state.Environment) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
+	monitor := health.New(store, cfg.Projects, r.ProbeHealth)
+	done := make(chan struct{})
+	go func() { defer close(done); monitor.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	var first time.Time
+	for {
+		changed := monitor.Changes()
+		sample := monitor.Lookup(recovered)
+		if sample.Status == "Healthy" {
+			if monitor.Lookup(stale).Status != "Unknown" {
+				t.Fatal("monitor reused the observation for the stale route")
+			}
+			if !first.IsZero() && sample.LastSuccess.After(first) {
+				return
+			}
+			first = sample.LastSuccess
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			t.Fatalf("periodic monitor did not confirm the recovered route twice: %+v", sample)
+		}
 	}
 }

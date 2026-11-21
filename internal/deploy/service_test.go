@@ -34,8 +34,11 @@ func (f fakeRunner) Run(_ context.Context, _ string, _ int64, _ config.Project, 
 func (f fakeRunner) Cleanup(context.Context, string, int64, state.Attempt) error {
 	return f.cleanupErr
 }
-func (f fakeRunner) Check(_ context.Context, attempt state.Attempt, _ config.Project) (bool, error) {
-	return !f.checkFail || attempt.Port != 12345, nil
+func (f fakeRunner) HealthyPort(_ context.Context, attempt state.Attempt, _ config.Project) (int, error) {
+	if f.checkFail && attempt.Port == 12345 {
+		return 0, nil
+	}
+	return attempt.Port, nil
 }
 
 func TestFailedCutoverKeepsPreviousTarget(t *testing.T) {

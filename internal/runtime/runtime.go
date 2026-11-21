@@ -5,7 +5,6 @@ import (
 
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -144,32 +143,20 @@ func (r *Runtime) Cleanup(ctx context.Context, projectName string, intent int64,
 	return errors.Join(backend.remove(ctx, attempt), os.RemoveAll(workspace))
 }
 
-func (r *Runtime) Check(ctx context.Context, attempt state.Attempt, cfg config.Project) (bool, error) {
-	if !attemptID.MatchString(attempt.ID) || attempt.Port < 1 {
-		return false, nil
-	}
+// HealthyPort resolves the attempt's current upstream and probes it before use.
+func (r *Runtime) HealthyPort(ctx context.Context, attempt state.Attempt, cfg config.Project) (int, error) {
 	backend, err := r.backend(attempt)
 	if err != nil {
-		return false, err
+		return 0, err
 	}
-	running, err := backend.running(ctx, attempt)
-	if err != nil || !running {
-		return false, err
+	port, err := backend.currentPort(ctx, attempt)
+	if err != nil || port == 0 {
+		return 0, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d%s", attempt.Port, cfg.HealthPath), nil)
-	if err != nil {
-		return false, err
+	if err := r.ProbeHealth(ctx, port, cfg.HealthPath); err != nil {
+		return 0, err
 	}
-	response, err := r.client.Do(request)
-	if err != nil {
-		if ctx.Err() != nil {
-			return false, ctx.Err()
-		}
-		return false, nil
-	}
-	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
-	return response.StatusCode >= 200 && response.StatusCode < 300, nil
+	return port, nil
 }
 
 func (r *Runtime) docker(ctx context.Context, limit int, args ...string) (string, error) {
