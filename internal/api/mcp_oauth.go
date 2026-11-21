@@ -39,9 +39,8 @@ func protectOAuthMCP(mux *http.ServeMux, cfg config.MCPOAuth, next http.Handler)
 		next.ServeHTTP(w, r)
 	}))
 	// Config validation requires an HTTPS URL with exactly the /mcp path.
-	host := strings.TrimSuffix(strings.TrimPrefix(cfg.Resource, "https://"), "/mcp")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.EqualFold(r.Host, host) {
+		if !strings.EqualFold("https://"+r.Host+"/mcp", cfg.Resource) {
 			http.Error(w, "invalid MCP host", http.StatusForbidden)
 			return
 		}
