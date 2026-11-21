@@ -64,3 +64,31 @@ func TestPullMergeTiming(t *testing.T) {
 		})
 	}
 }
+
+func TestIntentCompletionTiming(t *testing.T) {
+	opened := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name  string
+		issue *githubmeta.Issue
+		want  string
+	}{
+		{"reclosed as completed", &githubmeta.Issue{State: "CLOSED", StateReason: "COMPLETED", CreatedAt: opened, ClosedAt: new(opened.Add(time.Hour))}, "1h0m0s"},
+		{"same timestamp", &githubmeta.Issue{State: "CLOSED", StateReason: "COMPLETED", CreatedAt: opened, ClosedAt: &opened}, "0s"},
+		{"reopened", &githubmeta.Issue{State: "OPEN", StateReason: "REOPENED", CreatedAt: opened, ClosedAt: &opened}, "Pending"},
+		{"not planned", &githubmeta.Issue{State: "CLOSED", StateReason: "NOT_PLANNED", CreatedAt: opened, ClosedAt: &opened}, "Closed as not planned"},
+		{"duplicate", &githubmeta.Issue{State: "CLOSED", StateReason: "DUPLICATE", CreatedAt: opened, ClosedAt: &opened}, "Closed as duplicate"},
+		{"unknown reason", &githubmeta.Issue{State: "CLOSED", CreatedAt: opened, ClosedAt: &opened}, "Timing unavailable"},
+		{"missing opening", &githubmeta.Issue{State: "CLOSED", StateReason: "COMPLETED", ClosedAt: &opened}, "Timing unavailable"},
+		{"missing closure", &githubmeta.Issue{State: "CLOSED", StateReason: "COMPLETED", CreatedAt: opened}, "Timing unavailable"},
+		{"out of order", &githubmeta.Issue{State: "CLOSED", StateReason: "COMPLETED", CreatedAt: opened, ClosedAt: new(opened.Add(-time.Minute))}, "Timing unavailable"},
+		{"GitHub unavailable", nil, "Timing unavailable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Partial timeline or PR history does not invalidate the root issue fields.
+			view := detailView{GitHub: githubmeta.Result{Intent: tc.issue, Partial: true}}
+			if got := view.IntentCompletionTiming(); got != tc.want {
+				t.Errorf("Intent completion timing = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

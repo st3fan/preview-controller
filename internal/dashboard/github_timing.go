@@ -44,6 +44,30 @@ func pullMergeTiming(pull githubmeta.Pull) string {
 	return "Timing unavailable"
 }
 
+func (d detailView) IntentCompletionTiming() string {
+	issue := d.GitHub.Intent
+	if issue == nil {
+		return "Timing unavailable"
+	}
+	switch issue.State {
+	case "OPEN":
+		return "Pending"
+	case "CLOSED":
+		switch issue.StateReason {
+		case "NOT_PLANNED":
+			return "Closed as not planned"
+		case "DUPLICATE":
+			return "Closed as duplicate"
+		case "COMPLETED":
+			if !issue.CreatedAt.IsZero() && issue.ClosedAt != nil &&
+				!issue.ClosedAt.IsZero() && !issue.ClosedAt.Before(issue.CreatedAt) {
+				return elapsedTime(issue.CreatedAt, *issue.ClosedAt)
+			}
+		}
+	}
+	return "Timing unavailable"
+}
+
 func elapsedTime(start, end time.Time) string {
 	return end.Sub(start).Round(time.Millisecond).String()
 }

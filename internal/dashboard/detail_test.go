@@ -99,8 +99,21 @@ func TestDetailGitHubMetadata(t *testing.T) {
 		}`), &earlier); err != nil {
 			t.Fatal(err)
 		}
+		var issue githubmeta.Issue
+		if err := json.Unmarshal([]byte(`{
+			"number":51,"title":"<script>live title</script>","state":"CLOSED","stateReason":"COMPLETED",
+			"createdAt":"2026-11-20T12:00:00Z","closedAt":"2026-11-20T12:08:00Z",
+			"timelineItems":{"pageInfo":{"hasPreviousPage":true},"nodes":[
+				{"__typename":"ClosedEvent","createdAt":"2026-11-20T12:02:00Z","url":"https://github.com/example/alpha/issues/51#event-123"},
+				{"__typename":"ReopenedEvent","createdAt":"2026-11-20T12:03:30Z"},
+				{"__typename":"ClosedEvent","createdAt":"2026-11-20T12:08:01Z","url":"https://example.com/example/alpha/issues/51#event-124"},
+				{"__typename":"ReopenedEvent"}
+			]}
+		}`), &issue); err != nil {
+			t.Fatal(err)
+		}
 		return githubmeta.Result{
-			Intent:  &githubmeta.Issue{Number: 51, Title: "<script>live title</script>", State: "OPEN", CreatedAt: opened},
+			Intent:  &issue,
 			Related: []githubmeta.Issue{{Number: 52, Title: "Related work", State: "CLOSED"}},
 			Pulls: []githubmeta.Pull{
 				{Number: 57, Title: "<b>Pull request</b>", State: "MERGED",
@@ -125,10 +138,13 @@ func TestDetailGitHubMetadata(t *testing.T) {
 	_, timeline, _ := strings.Cut(page, "<h2 id=\"activity\">Activity timeline</h2>")
 	timeline, _, _ = strings.Cut(timeline, "</section>")
 	requireText(t, timeline, "GitHub activity is incomplete.", "Controller deployment activity is incomplete.", "GitHub", "Controller",
-		"/pull/56#pullrequestreview-42", "/pull/56/commits/"+commit)
-	for _, event := range []string{"Issue #51 opened", "PR #56 commit recorded", "PR #56 opened", "PR #56 review submitted", "PR #57 opened",
+		"/pull/56#pullrequestreview-42", "/pull/56/commits/"+commit, "/issues/51#event-123")
+	if strings.Contains(timeline, "#event-124") || strings.Count(timeline, "Issue #51 reopened") != 1 {
+		t.Fatal("timeline rendered an untrusted link or a reopen without a timestamp")
+	}
+	for _, event := range []string{"Issue #51 opened", "PR #56 commit recorded", "PR #56 opened", "Issue #51 closed", "PR #56 review submitted", "PR #57 opened", "Issue #51 reopened",
 		"Deployment requested</a> · first", "Deployment requested</a> · retry",
-		"Preview activated", "Deployment failed", "PR #57 merged"} {
+		"Preview activated", "Deployment failed", "PR #57 merged", "Issue #51 closed"} {
 		_, remaining, found := strings.Cut(timeline, event)
 		if !found {
 			t.Fatalf("missing or out-of-order event %q", event)
@@ -143,7 +159,8 @@ func TestDetailGitHubMetadata(t *testing.T) {
 		t.Fatalf("complete history returned HTTP %d", resp.Code)
 	}
 	requireText(t, resp.Body.String(), "<dt>Intent opened</dt>", "<dt>First linked PR opened</dt>",
-		"<dt>Elapsed time to first linked PR</dt><dd>1m0s</dd>")
+		"<dt>Elapsed time to first linked PR</dt><dd>1m0s</dd>", "<dt>Intent closed as completed</dt>",
+		"<dt>Elapsed time from Intent opening to completed closure</dt><dd>8m0s</dd>")
 
 	mux = http.NewServeMux()
 	registerDetail(mux, cfg, load, health.New(nil, nil, nil), func(context.Context, string, int64) githubmeta.Result { return githubmeta.Result{} })
