@@ -26,7 +26,7 @@ func TestDashboard(t *testing.T) {
 	mux := http.NewServeMux()
 	projects := map[string]config.Project{"alpha": {Repository: "https://github.com/example/alpha.git"}}
 	monitor := health.New(store, projects, func(context.Context, int, string) error { return nil })
-	Register(mux, shutdown, config.Config{Projects: projects}, store.List, store.Changes, monitor)
+	Register(mux, shutdown, config.Config{Projects: projects}, store.Load, store.List, store.Changes, monitor)
 	server := httptest.NewUnstartedServer(mux)
 	server.Config.WriteTimeout = 100 * time.Millisecond
 	server.Start()
@@ -134,7 +134,7 @@ func TestArchivedDashboardRow(t *testing.T) {
 	deadline := time.Date(2026, time.November, 27, 19, 0, 0, 0, time.UTC)
 	const archivedCommit = "0123456789abcdef0123456789abcdef01234567"
 	projects := map[string]config.Project{"demo": {Repository: "https://github.com/example/demo.git"}}
-	Register(mux, context.Background(), config.Config{Projects: projects}, func() ([]state.Environment, error) {
+	Register(mux, context.Background(), config.Config{Projects: projects}, nil, func() ([]state.Environment, error) {
 		return []state.Environment{{
 			Project: "demo", Intent: 45, DeleteAt: &deadline, ActiveCommit: archivedCommit,
 			Attempts: []state.Attempt{{Commit: strings.Repeat("f", 40), Status: state.Failed}},
@@ -152,7 +152,7 @@ func TestArchivedDashboardRow(t *testing.T) {
 
 func TestUnavailableDashboard(t *testing.T) {
 	mux := http.NewServeMux()
-	Register(mux, t.Context(), config.Config{}, func() ([]state.Environment, error) {
+	Register(mux, t.Context(), config.Config{}, nil, func() ([]state.Environment, error) {
 		return nil, errors.New("private state path")
 	}, nil, health.New(nil, nil, nil))
 	page := httptest.NewRecorder()
@@ -241,7 +241,7 @@ func TestDashboardBackfillsMissingTitles(t *testing.T) {
 	}
 	titles := newIssueTitles()
 	mux := http.NewServeMux()
-	registerDashboard(mux, ctx, projects, store.List, store.Changes, health.New(store, projects, nil), titles)
+	registerDashboard(mux, newHostSampler(""), ctx, projects, store.List, store.Changes, health.New(store, projects, nil), titles)
 	server := httptest.NewServer(mux)
 	defer server.Close()
 	client := server.Client()

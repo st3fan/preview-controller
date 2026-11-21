@@ -1,0 +1,21 @@
+{{define "host-bar"}}
+<div class="host-band"><details class="wrap" id="host-bar">{{template "host-values" .}}</details></div>
+{{end}}
+
+{{define "capacity-summary"}}{{with .}}<b>{{.Percent}}%</b><meter aria-hidden="true" min="0" max="100" value="{{.Percent}}"></meter>{{else}}Unavailable{{end}}{{end}}
+{{define "capacity-detail"}}{{with .}}<strong>{{.Used}} / {{.Total}} GiB</strong><span>{{.Available}} GiB available</span>{{else}}Unavailable{{end}}{{end}}
+
+{{define "host-values"}}
+<summary>
+  <strong>Preview host</strong>
+  <span>Memory {{template "capacity-summary" .Memory}}</span>
+  <span>Workspace disk {{template "capacity-summary" .Disk}}</span>
+  <span>CPU load {{with .Load}}<b>{{.One}}</b> on {{.CPUs}} CPUs{{else}}Unavailable{{end}}</span>
+  <small data-age="{{.Age}}" title="{{.At.Format "2006-01-02 15:04:05 UTC"}}">Sampled {{.At.Format "15:04:05 UTC"}}</small>
+</summary>
+<dl class="host-readings">
+  <div><dt>Memory used</dt><dd>{{template "capacity-detail" .Memory}}</dd></div>
+  <div><dt>Workspace disk used</dt><dd>{{template "capacity-detail" .Disk}}</dd></div>
+  <div><dt>CPU load average</dt><dd>{{with .Load}}<strong>{{.One}} on {{.CPUs}} CPUs</strong><span>1 min {{.One}} · 5 min {{.Five}} · 15 min {{.Fifteen}}</span>{{else}}Unavailable{{end}}</dd></div>
+</dl>
+{{end}}

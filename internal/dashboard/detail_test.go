@@ -22,7 +22,7 @@ func TestPreviewDetail(t *testing.T) {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	RegisterDetail(mux, config.Config{PreviewDomain: "preview.example.com", Projects: map[string]config.Project{
+	registerDetailPage(mux, newHostSampler(""), config.Config{PreviewDomain: "preview.example.com", Projects: map[string]config.Project{
 		"alpha": {Repository: "https://github.com/example/alpha.git"},
 	}}, store.Load, health.New(store, nil, nil))
 	acceptedAt := time.Date(2026, 11, 20, 12, 29, 0, 0, time.UTC)
@@ -87,7 +87,7 @@ func TestDetailGitHubMetadata(t *testing.T) {
 	load := func(string, int64) (state.Environment, error) { return env, nil }
 	mux := http.NewServeMux()
 	partial := true
-	registerDetail(mux, cfg, load, health.New(nil, nil, nil), func(_ context.Context, repository string, intent int64) githubmeta.Result {
+	registerDetail(mux, newHostSampler(""), cfg, load, health.New(nil, nil, nil), func(_ context.Context, repository string, intent int64) githubmeta.Result {
 		if repository != "example/alpha" || intent != 51 {
 			t.Fatalf("unexpected lookup %s #%d", repository, intent)
 		}
@@ -163,7 +163,7 @@ func TestDetailGitHubMetadata(t *testing.T) {
 		"<dt>Elapsed time from Intent opening to completed closure</dt><dd>8m0s</dd>")
 
 	mux = http.NewServeMux()
-	registerDetail(mux, cfg, load, health.New(nil, nil, nil), func(context.Context, string, int64) githubmeta.Result { return githubmeta.Result{} })
+	registerDetail(mux, newHostSampler(""), cfg, load, health.New(nil, nil, nil), func(context.Context, string, int64) githubmeta.Result { return githubmeta.Result{} })
 	resp = httptest.NewRecorder()
 	mux.ServeHTTP(resp, request)
 	if resp.Code != http.StatusOK {
@@ -183,7 +183,7 @@ func TestArchivedDetailKeepsServingRevision(t *testing.T) {
 		{ID: "replacement", Commit: strings.Repeat("f", 40), Status: state.Failed},
 	}}
 	mux := http.NewServeMux()
-	RegisterDetail(mux, cfg, func(string, int64) (state.Environment, error) { return env, nil }, health.New(nil, cfg.Projects, nil))
+	registerDetailPage(mux, newHostSampler(""), cfg, func(string, int64) (state.Environment, error) { return env, nil }, health.New(nil, cfg.Projects, nil))
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/dashboard/previews/demo/12", nil))
 	body := response.Body.String()
