@@ -31,13 +31,22 @@ func protectOAuthMCP(mux *http.ServeMux, cfg config.MCPOAuth, next http.Handler)
 		ResourceMetadataURL: strings.TrimSuffix(cfg.Resource, "/mcp") + metadataPath,
 		Scopes:              []string{operatorScope},
 	}
-	return auth.RequireBearerToken(accessTokenVerifier(cfg, keys), options)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	authenticated := auth.RequireBearerToken(accessTokenVerifier(cfg, keys), options)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !slices.Contains(cfg.OperatorSubjects, auth.TokenInfoFromContext(r.Context()).UserID) {
 			http.Error(w, "operator access denied", http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)
 	}))
+	// Config validation requires an HTTPS URL with exactly the /mcp path.
+	host := strings.TrimSuffix(strings.TrimPrefix(cfg.Resource, "https://"), "/mcp")
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.EqualFold(r.Host, host) {
+			http.Error(w, "invalid MCP host", http.StatusForbidden)
+			return
+		}
+		authenticated.ServeHTTP(w, r)
+	})
 }
 
 func accessTokenVerifier(cfg config.MCPOAuth, keys oidc.KeySet) auth.TokenVerifier {

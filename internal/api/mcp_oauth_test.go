@@ -73,12 +73,18 @@ func TestOAuthAccess(t *testing.T) {
 	RegisterMCP(mux, nil, nil, "legacy", &f.cfg, nil)
 	request := func(path, token string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
+		if strings.HasPrefix(path, "/") {
+			r.Host = "preview.test"
+		}
 		if token != "" {
 			r.Header.Set("Authorization", "Bearer "+token)
 		}
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, r)
 		return w
+	}
+	if w := request("https://other.test/mcp", f.accessToken(t)); w.Code != 403 {
+		t.Fatal(w)
 	}
 	missing := request("/mcp", "")
 	if missing.Code != 401 || !strings.Contains(missing.Header().Get("WWW-Authenticate"), `resource_metadata="https://preview.test`+metadataPath+`"`) {

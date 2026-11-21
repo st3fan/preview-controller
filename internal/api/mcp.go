@@ -162,7 +162,9 @@ func RegisterMCP(mux *http.ServeMux, service mcpService, projects map[string]con
 		auditMutation(ctx, "remove_preview", in.Project, in.Intent, err)
 		return removal{Removed: err == nil}, err
 	})
-	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
+	// OAuth mode enforces the configured resource host in protectOAuthMCP,
+	// including when a private reverse proxy connects over loopback.
+	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return s }, &mcp.StreamableHTTPOptions{Stateless: true, JSONResponse: true, DisableLocalhostProtection: oauth != nil})
 	transport := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, err := url.Parse(origin)

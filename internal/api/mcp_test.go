@@ -49,10 +49,14 @@ func (*fixtureRuntime) HealthyPort(_ context.Context, a state.Attempt, _ config.
 type tokenTransport struct {
 	http.RoundTripper
 	token string
+	host  string
 }
 
 func (t tokenTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	req := r.Clone(r.Context())
+	if t.host != "" {
+		req.Host = t.host
+	}
 	req.Header.Set("Authorization", "Bearer "+t.token)
 	return t.RoundTripper.RoundTrip(req)
 }
@@ -77,12 +81,19 @@ func testMCPWorkflow(t *testing.T, oauth *config.MCPOAuth, token string) {
 	}
 	defer service.Close()
 	mux := http.NewServeMux()
+	var host string
+	if oauth != nil {
+		host = "preview.test"
+	}
 	RegisterMCP(mux, service, cfg.Projects, "fixture", oauth, func(_ context.Context, a state.Attempt) (string, error) { return "output for " + a.ID, nil })
 	for _, tc := range []struct {
 		auth, origin string
 		status       int
 	}{{"", "", 401}, {"Bearer wrong", "", 401}, {"Bearer " + token, "https://other.example", 403}} {
 		req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+		if host != "" {
+			req.Host = host
+		}
 		req.Header.Set("Authorization", tc.auth)
 		req.Header.Set("Origin", tc.origin)
 		w := httptest.NewRecorder()
@@ -96,7 +107,7 @@ func testMCPWorkflow(t *testing.T, oauth *config.MCPOAuth, token string) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	client := mcp.NewClient(&mcp.Implementation{Name: "fixture", Version: "1"}, nil)
-	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: server.URL + "/mcp", HTTPClient: &http.Client{Transport: tokenTransport{server.Client().Transport, token}}}, nil)
+	session, err := client.Connect(ctx, &mcp.StreamableClientTransport{Endpoint: server.URL + "/mcp", HTTPClient: &http.Client{Transport: tokenTransport{server.Client().Transport, token, host}}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
