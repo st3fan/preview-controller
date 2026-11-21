@@ -165,21 +165,18 @@ to permanently remove the environment and its history.
 
 ### Pocket ID sign-in on the LAN or VPN
 
-Use a private HTTPS name reachable from your agent workstation. The following
-Caddy example forwards the two MCP paths to the management listener. Substitute
-your private DNS name, listener address, and usual TLS settings.
+Use one private HTTPS hostname for the dashboard, REST API and MCP. Restrict
+access to trusted operators on the LAN or VPN: dashboard actions and REST reads
+trust network access. For example, on a private Caddy ingress:
 
 ```caddyfile
-mcp.example.net {
-    @mcp path /mcp /.well-known/oauth-protected-resource/mcp
-    handle @mcp {
-        reverse_proxy 127.0.0.1:8080
-    }
-    handle {
-        respond 404
-    }
+preview.example.com {
+    reverse_proxy 127.0.0.1:8080
 }
 ```
+
+Use your management listener address and usual TLS settings. Keep the wildcard
+preview application hosts routed to the separate preview listener.
 
 1. In Pocket ID **Administration → APIs**, add **Preview Controller** with the exact
    HTTPS resource URL including `/mcp`. Create the API permission
@@ -205,16 +202,17 @@ mcp.example.net {
 "mcp_oauth": {
   "issuer": "https://pocket-id.example.net",
   "jwks_uri": "https://pocket-id.example.net/.well-known/jwks.json",
-  "resource": "https://mcp.example.net/mcp"
+  "resource": "https://preview.example.com/mcp"
 }
 ```
 
 4. Restart the controller. From the workstation, request `/mcp` without
    credentials. Its 401 challenge links to the protected-resource metadata.
    Check that the metadata advertises the exact HTTPS resource and issuer.
-   Verify the MCP hostname returns 404 for the dashboard and REST paths.
+   From the trusted network, verify that the same host serves the dashboard at
+   `/` and the REST environment list at `/api/environments`.
 5. Remove any deployment-token header or bearer environment setting from the
-   client's MCP entry. In Codex, run `codex mcp add preview --url https://mcp.example.net/mcp`
+   client's MCP entry. In Codex, run `codex mcp add preview --url https://preview.example.com/mcp`
    and `codex mcp login preview`. Complete the browser
    passkey prompt and consent on the client workstation.
 6. Call `list_projects` in Codex. Repeat after restarting Codex and
