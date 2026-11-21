@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/st3fan/preview-controller/internal/config"
 	"github.com/st3fan/preview-controller/internal/state"
 	"golang.org/x/net/html"
 )
@@ -38,7 +39,7 @@ func inspectorData(repository, dashboardOrigin, project string, intent int64, at
 	if attempt.IssueTitle != "" {
 		details.Issue += " " + attempt.IssueTitle
 	}
-	if dashboardOrigin != "" && attempt.ComposeProject != "" {
+	if dashboardOrigin != "" && (attempt.Backend == config.BackendDocker || attempt.ComposeProject != "") {
 		details.LogsURL = fmt.Sprintf("%s/dashboard/logs/%s/%d/%s", dashboardOrigin, project, intent, url.PathEscape(attempt.ID))
 	}
 	return details

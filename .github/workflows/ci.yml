@@ -19,6 +19,8 @@ jobs:
           go-version-file: go.mod
       - run: go test ./...
       - run: go vet ./...
+      - name: Verify preview lifecycle on Docker Engine
+        run: go test -tags=integration -timeout=30m ./internal/runtime ./internal/ingress
 
   image:
     runs-on: ubuntu-24.04

@@ -40,7 +40,20 @@ type Config struct {
 	token              string
 }
 
+const (
+	BackendCompose = "compose"
+	BackendDocker  = "docker"
+)
+
+func (p Project) DeploymentBackend() string {
+	if p.Backend == "" {
+		return BackendCompose
+	}
+	return p.Backend
+}
+
 type Project struct {
+	Backend            string            `json:"backend,omitempty"`
 	ArchiveAfterIdle   string            `json:"archive_after_idle,omitempty"`
 	DeleteAfterArchive string            `json:"delete_after_archive,omitempty"`
 	PreviewInspector   bool              `json:"preview_inspector,omitempty"`
@@ -174,11 +187,20 @@ func (p Project) Validate() error {
 	if len(parts) != 2 || !gitPart.MatchString(parts[0]) || !gitPart.MatchString(strings.TrimSuffix(parts[1], ".git")) || parts[0] == "." || parts[1] == "." {
 		return errors.New("repository must identify one GitHub owner and repository")
 	}
-	if p.ComposeFile == "" || path.IsAbs(p.ComposeFile) || path.Clean(p.ComposeFile) != p.ComposeFile || strings.HasPrefix(p.ComposeFile, "../") || p.ComposeFile == ".." || strings.Contains(p.ComposeFile, `\`) {
-		return errors.New("compose_file must be a clean relative path")
-	}
-	if !projectName.MatchString(p.PublicService) {
-		return errors.New("public_service must be a service slug")
+	switch p.DeploymentBackend() {
+	case BackendCompose:
+		if p.ComposeFile == "" || path.IsAbs(p.ComposeFile) || path.Clean(p.ComposeFile) != p.ComposeFile || strings.HasPrefix(p.ComposeFile, "../") || p.ComposeFile == ".." || strings.Contains(p.ComposeFile, `\`) {
+			return errors.New("compose_file must be a clean relative path")
+		}
+		if !projectName.MatchString(p.PublicService) {
+			return errors.New("public_service must be a service slug")
+		}
+	case BackendDocker:
+		if p.ComposeFile != "" || p.PublicService != "" || len(p.ComposeEnv)+len(p.ComposeEnvFrom) != 0 {
+			return errors.New("Compose settings require the compose backend")
+		}
+	default:
+		return fmt.Errorf("unknown deployment backend %q", p.Backend)
 	}
 	if p.PublicPort < 0 || p.PublicPort > 65535 {
 		return errors.New("public_port must be zero (default) or between 1 and 65535")

@@ -3,8 +3,10 @@
 package ingress_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -39,6 +41,12 @@ func (r cutoverRunner) Check(ctx context.Context, attempt state.Attempt, project
 
 // Run with -tags=integration -timeout=30m on a disposable Linux Docker host.
 func TestFullPreviewLifecycle(t *testing.T) {
+	for _, backend := range []string{config.BackendCompose, config.BackendDocker} {
+		t.Run(backend, func(t *testing.T) { testFullPreviewLifecycle(t, backend) })
+	}
+}
+
+func testFullPreviewLifecycle(t *testing.T, backend string) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("Docker CLI is unavailable")
 	}
@@ -71,7 +79,13 @@ func TestFullPreviewLifecycle(t *testing.T) {
 	dockerfile := fixture("Dockerfile")
 	commit := func(message, page, composeText string) string {
 		t.Helper()
-		for name, content := range map[string]string{"Dockerfile": dockerfile, "index.html": page, "compose.preview.yaml": composeText} {
+		files := map[string]string{"Dockerfile": dockerfile, "index.html": page}
+		if backend == config.BackendCompose {
+			files["compose.preview.yaml"] = composeText
+		} else if message == "invalid candidate" {
+			files["Dockerfile"] += "EXPOSE 9000/tcp\n"
+		}
+		for name, content := range files {
 			if err := os.WriteFile(filepath.Join(source, name), []byte(content), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -87,7 +101,7 @@ func TestFullPreviewLifecycle(t *testing.T) {
 	}
 	first := commit("first", fixture("index.html"), compose)
 	second := commit("second", "second", compose)
-	bad := commit("invalid Compose", "bad", compose+"    privileged: true\n")
+	bad := commit("invalid candidate", "bad", compose+"    privileged: true\n")
 	cutoverFailure := commit("cutover failure", "third", compose)
 	root := t.TempDir()
 	store, err := state.New(filepath.Join(root, "state"))
@@ -102,6 +116,9 @@ func TestFullPreviewLifecycle(t *testing.T) {
 	cfg := config.Config{PreviewDomain: "preview.example.com", Projects: map[string]config.Project{
 		"fixture": {Repository: source, ComposeFile: "compose.preview.yaml", PublicService: "web", PublicPort: 8080, HealthPath: "/"},
 	}}
+	if backend == config.BackendDocker {
+		cfg.Projects["fixture"] = config.Project{Backend: backend, Repository: source, HealthPath: "/"}
+	}
 	var service *deploy.Service
 	t.Cleanup(func() {
 		if service != nil {
@@ -126,11 +143,11 @@ func TestFullPreviewLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	submit := func(sha string) state.Attempt {
+	submit := func(intent int64, sha string) state.Attempt {
 		t.Helper()
 		deadline := time.Now().Add(30 * time.Second)
 		for {
-			attempt, _, err := service.Submit("fixture", 123, sha)
+			attempt, _, err := service.Submit("fixture", intent, sha)
 			if err == nil {
 				return attempt
 			}
@@ -140,11 +157,11 @@ func TestFullPreviewLifecycle(t *testing.T) {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
-	wait := func(id string, want state.Status) state.Environment {
+	wait := func(intent int64, id string, want state.Status) state.Environment {
 		t.Helper()
 		deadline := time.Now().Add(8 * time.Minute)
 		for time.Now().Before(deadline) {
-			env, err := service.GetEnvironment("fixture:123")
+			env, err := service.GetEnvironment(state.ID("fixture", intent))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -161,47 +178,83 @@ func TestFullPreviewLifecycle(t *testing.T) {
 		t.Fatal("deployment did not finish")
 		return state.Environment{}
 	}
-	preview := func(want string) {
+	preview := func(intent int64, want string) {
 		t.Helper()
-		r := httptest.NewRequest(http.MethodGet, "http://fixture-123.preview.example.com/", nil)
+		r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("http://fixture-%d.preview.example.com/", intent), nil)
 		w := httptest.NewRecorder()
 		ingress.Handler(cfg, service).ServeHTTP(w, r)
 		if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != want {
 			t.Fatalf("preview = %d %q, want %q", w.Code, w.Body.String(), want)
 		}
 	}
-	firstAttempt := submit(first)
-	if env := wait(firstAttempt.ID, state.Healthy); env.ActiveCommit != first {
+	firstAttempt := submit(123, first)
+	if backend == config.BackendDocker {
+		other := submit(124, second)
+		wait(124, other.ID, state.Healthy)
+	}
+	if env := wait(123, firstAttempt.ID, state.Healthy); env.ActiveCommit != first {
 		t.Fatalf("first active commit: %s", env.ActiveCommit)
 	}
-	preview("first")
+	preview(123, "first")
+	if backend == config.BackendDocker {
+		preview(124, "second")
+		firstPort, err := service.ActivePort("fixture", 123)
+		if err != nil {
+			t.Fatal(err)
+		}
+		otherPort, err := service.ActivePort("fixture", 124)
+		if err != nil || otherPort == firstPort {
+			t.Fatalf("concurrent mappings: %d, %d, %v", firstPort, otherPort, err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		follow, err := runner.OpenLogs(ctx, firstAttempt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var output bytes.Buffer
+		_ = follow(&output)
+		if !strings.Contains(output.String(), "GET /") {
+			t.Fatalf("expected HTTP access log, got %q", output.String())
+		}
+		if err := service.ArchiveEnvironment("fixture:123"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := service.ActivePort("fixture", 123); err == nil {
+			t.Fatal("archived preview still has a route")
+		}
+		if err := service.RestoreEnvironment("fixture:123"); err != nil {
+			t.Fatal(err)
+		}
+		preview(123, "first")
+	}
 	logRequest := httptest.NewRequest(http.MethodGet, "http://fixture-123.preview.example.com/dashboard/logs/fixture/123/"+firstAttempt.ID, nil)
 	logResponse := httptest.NewRecorder()
 	ingress.Handler(cfg, service).ServeHTTP(logResponse, logRequest)
 	if logResponse.Code != http.StatusNotFound {
 		t.Fatalf("preview hostname log path returned %d", logResponse.Code)
 	}
-	secondAttempt := submit(second)
-	if env := wait(secondAttempt.ID, state.Healthy); env.ActiveCommit != second {
+	secondAttempt := submit(123, second)
+	if env := wait(123, secondAttempt.ID, state.Healthy); env.ActiveCommit != second {
 		t.Fatalf("replacement active commit: %s", env.ActiveCommit)
 	}
-	preview("second")
+	preview(123, "second")
 	service.Close()
 	service, err = deploy.New(cfg, store, gitverify.Verifier{}, runner)
 	if err != nil {
 		t.Fatal(err)
 	}
-	preview("second")
-	badAttempt := submit(bad)
-	if env := wait(badAttempt.ID, state.Failed); env.ActiveCommit != second {
+	preview(123, "second")
+	badAttempt := submit(123, bad)
+	if env := wait(123, badAttempt.ID, state.Failed); env.ActiveCommit != second {
 		t.Fatalf("failed candidate changed active commit: %s", env.ActiveCommit)
 	}
-	preview("second")
-	cutoverAttempt := submit(cutoverFailure)
-	if env := wait(cutoverAttempt.ID, state.Failed); env.ActiveCommit != second {
+	preview(123, "second")
+	cutoverAttempt := submit(123, cutoverFailure)
+	if env := wait(123, cutoverAttempt.ID, state.Failed); env.ActiveCommit != second {
 		t.Fatalf("failed cutover changed active commit: %s", env.ActiveCommit)
 	}
-	preview("second")
+	preview(123, "second")
 	deadline := time.Now().Add(30 * time.Second)
 	for {
 		err := service.DeleteEnvironment("fixture:123")
@@ -216,6 +269,9 @@ func TestFullPreviewLifecycle(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "http://fixture-123.preview.example.com/", nil)
 	w := httptest.NewRecorder()
 	ingress.Handler(cfg, service).ServeHTTP(w, r)
+	if backend == config.BackendDocker {
+		preview(124, "second")
+	}
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("deleted preview status = %d", w.Code)
 	}

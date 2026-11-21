@@ -16,16 +16,16 @@ func (r *Runtime) dockerCommand(ctx context.Context, args ...string) *exec.Cmd {
 	return cmd
 }
 
-// runComposeStep captures the end of failed build or startup output. These
+// runDeploymentStep captures the end of failed build or startup output. These
 // commands use output for diagnostics only, so truncation cannot fail a build.
-func (r *Runtime) runComposeStep(ctx context.Context, confidential bool, args ...string) (string, error) {
+func (r *Runtime) runDeploymentStep(ctx context.Context, confidential bool, args ...string) (string, error) {
 	cmd := r.dockerCommand(ctx, args...)
 	var output diagnosticOutput
 	if !confidential {
 		cmd.Stdout, cmd.Stderr = &output, &output
 	}
 	if err := cmd.Run(); err != nil {
-		return strings.ToValidUTF8(string(output.data), ""), fmt.Errorf("Docker Compose command failed: %w", err)
+		return strings.ToValidUTF8(string(output.data), ""), fmt.Errorf("Docker command failed: %w", err)
 	}
 	return "", nil
 }

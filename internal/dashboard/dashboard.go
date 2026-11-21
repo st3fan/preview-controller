@@ -30,6 +30,7 @@ var templates = template.Must(template.New("pages").Funcs(template.FuncMap{
 }).ParseFS(files, "*.html"))
 
 type environment struct {
+	BackendName    string
 	Project        string
 	Archived       bool
 	CanArchive     bool
@@ -87,7 +88,7 @@ func registerDashboard(mux *http.ServeMux, shutdown context.Context, projects ma
 		}
 		var data view
 		for _, env := range envs {
-			row := environment{
+			row := environment{BackendName: backendName(env),
 				Project:        env.Project,
 				Health:         monitor.Lookup(env),
 				Archived:       env.DeleteAt != nil,

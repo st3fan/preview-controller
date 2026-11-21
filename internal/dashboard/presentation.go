@@ -5,6 +5,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/st3fan/preview-controller/internal/config"
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
@@ -48,4 +49,18 @@ func attemptOutcome(status state.Status) string {
 	default:
 		return strings.ToUpper(string(status[:1])) + string(status[1:])
 	}
+}
+
+func backendName(env state.Environment) string {
+	var backend string
+	for _, a := range env.Attempts {
+		backend = a.Backend
+		if a.ID == env.ActiveDeploymentID {
+			break
+		}
+	}
+	if backend == config.BackendDocker {
+		return "Docker"
+	}
+	return "Compose"
 }

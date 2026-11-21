@@ -13,7 +13,7 @@ import (
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
-func (r *Runtime) Stop(ctx context.Context, attempt state.Attempt) error {
+func (r composeBackend) stop(ctx context.Context, attempt state.Attempt) error {
 	if !attemptID.MatchString(attempt.ID) {
 		return errors.New("invalid deployment identity")
 	}
@@ -54,7 +54,7 @@ func (r *Runtime) Stop(ctx context.Context, attempt state.Attempt) error {
 	return err
 }
 
-func (r *Runtime) Restore(ctx context.Context, project string, intent int64, cfg config.Project, attempt state.Attempt) (int, error) {
+func (r composeBackend) restore(ctx context.Context, project string, intent int64, cfg config.Project, attempt state.Attempt) (int, error) {
 	if !attemptID.MatchString(attempt.ID) || intent < 1 || project == "" || strings.ContainsAny(project, "/\\.") {
 		return 0, errors.New("invalid deployment identity")
 	}

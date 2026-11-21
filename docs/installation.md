@@ -224,3 +224,19 @@ stack order unavailable.
 Each lookup reads up to 20 sub-issues and 20 closing PR references per issue.
 The page flags incomplete results. The deployment-supplied title remains
 available when the live title cannot be fetched.
+
+### Single-container Docker projects
+
+For a project with one web process, configure the project entry in `/etc/preview-server.json` like this:
+
+```json
+{
+  "backend": "docker",
+  "repository": "https://github.com/example/web",
+  "health_path": "/health"
+}
+```
+
+The controller builds the root `Dockerfile` with the authorized checkout as its context and starts the image's default command. The application must listen on a container network interface and serve HTTP. If the built image exposes exactly one TCP port, the controller uses it. Otherwise set `public_port` to the internal TCP port. Docker allocates a separate loopback host port for each attempt. The stable preview hostname switches only after the candidate passes its health check.
+
+Use the default `compose` backend for projects with dependencies or multiple services. Its `compose_file`, `public_service`, interpolation settings and default internal port of 8080 still apply.

@@ -141,7 +141,7 @@ func (s *Service) SubmitWithIssueTitle(project string, intent int64, commit, tit
 		return state.Attempt{}, state.Environment{}, err
 	}
 	now := time.Now().UTC()
-	attempt := state.Attempt{ID: id, Commit: strings.ToLower(commit), IssueTitle: strings.TrimSpace(title), Status: state.Queued, CreatedAt: now, UpdatedAt: now}
+	attempt := state.Attempt{Backend: projectCfg.DeploymentBackend(), ID: id, Commit: strings.ToLower(commit), IssueTitle: strings.TrimSpace(title), Status: state.Queued, CreatedAt: now, UpdatedAt: now}
 	env.URL = url
 	env.Attempts = append(env.Attempts, attempt)
 	env.UpdatedAt = now

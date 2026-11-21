@@ -20,7 +20,7 @@ func TestComposeFailureOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, confidential := range []bool{false, true} {
-		output, err := runner.runComposeStep(context.Background(), confidential, "compose", "build")
+		output, err := runner.runDeploymentStep(context.Background(), confidential, "compose", "build")
 		if err == nil || strings.Contains(err.Error(), "last build error") {
 			t.Fatalf("public-facing command error = %v", err)
 		}

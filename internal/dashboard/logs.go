@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/st3fan/preview-controller/internal/config"
 	"io"
 	"net/http"
 	"strconv"
@@ -14,7 +15,7 @@ import (
 )
 
 func hasLogs(attempt state.Attempt) bool {
-	return attempt.ComposeProject != "" && (attempt.Status == state.Starting || attempt.Status == state.Healthy)
+	return (attempt.Backend == config.BackendDocker || attempt.ComposeProject != "") && (attempt.Status == state.Starting || attempt.Status == state.Healthy)
 }
 
 func RegisterLogs(mux *http.ServeMux, shutdown context.Context,
@@ -71,7 +72,7 @@ func RegisterLogs(mux *http.ServeMux, shutdown context.Context,
 				return
 			}
 			if err := follow(output); err != nil && ctx.Err() == nil {
-				_, _ = fmt.Fprintln(output, "\nLog stream ended because Docker Compose could not continue.")
+				_, _ = fmt.Fprintln(output, "\nLog stream ended because the runtime could not continue.")
 			}
 			return
 		}
