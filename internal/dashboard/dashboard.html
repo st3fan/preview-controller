@@ -12,7 +12,7 @@
   <script defer src="/dashboard/assets/delete.js"></script>
 </head>
 <body>
-  {{template "masthead"}}
+  {{template "masthead" .}}
   {{template "host-bar" .Host}}
   <main class="wrap">
     <h1>Preview environments</h1>
@@ -76,9 +76,11 @@
       {{range .Logs}}
       <a class="icon-action" data-tip="Live logs · {{.ID}}" href="/dashboard/logs/{{$.Project}}/{{$.Intent}}/{{.ID}}" target="_blank" rel="noopener" aria-label="Live logs for {{$.Project}} #{{$.Intent}}, {{.ID}} (opens in a new tab)">{{template "icon" "journal-text"}}<span class="new-tab-corner">{{template "icon" "box-arrow-up-right"}}</span></a>
       {{end}}
+      {{if .CanOperate}}
       {{if .CanArchive}}<button class="icon-action" type="button" data-tip="Archive" aria-label="Archive {{.Project}} #{{.Intent}}" data-action="archive" data-action-url="/dashboard/environments/{{.Project}}/{{.Intent}}/archive" data-preview="{{.Project}} #{{.Intent}}">{{template "icon" "archive"}}</button>{{end}}
       {{if .CanRestore}}<button class="icon-action" type="button" data-tip="Restore" aria-label="Restore {{.Project}} #{{.Intent}}" data-action="restore" data-action-url="/dashboard/environments/{{.Project}}/{{.Intent}}/restore" data-preview="{{.Project}} #{{.Intent}}">{{template "icon" "arrow-counterclockwise"}}</button>{{end}}
       <button class="icon-action danger" type="button" data-tip="Delete" data-delete-url="/dashboard/environments/{{.Project}}/{{.Intent}}/delete" data-preview="{{.Project}} #{{.Intent}}" aria-label="Delete {{.Project}} #{{.Intent}}">{{template "icon" "trash"}}</button>
+      {{end}}
     </div>
   </div>
   {{with .LifecycleError}}<p class="danger">{{.}}</p>{{end}}

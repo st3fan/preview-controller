@@ -11,6 +11,7 @@
   <div class="brand"><strong>Preview Controller</strong>
     {{with controllerBuild}}<a href="{{.URL}}">{{.Label}}</a>{{end}}
   </div>
+  {{if .SignedIn}}<form method="post" action="/dashboard/logout"><button type="submit">Sign out</button></form>{{end}}
   <button id="theme-toggle" type="button" aria-label="Color theme" hidden>{{template "icon" "display"}}</button>
 </div></header>
 {{end}}

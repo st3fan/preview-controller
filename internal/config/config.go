@@ -26,6 +26,7 @@ var (
 
 // Config contains operator settings. Deployment state is stored separately.
 type Config struct {
+	DashboardAuth      *DashboardAuth     `json:"dashboard_auth,omitempty"`
 	MCPOAuth           *MCPOAuth          `json:"mcp_oauth,omitempty"`
 	ArchiveAfterIdle   string             `json:"archive_after_idle,omitempty"`
 	DeleteAfterArchive string             `json:"delete_after_archive,omitempty"`
@@ -39,6 +40,14 @@ type Config struct {
 	GitHubTokenEnv     string             `json:"github_token_env,omitempty"`
 	Projects           map[string]Project `json:"projects"`
 	token              string
+}
+
+// DashboardAuth maps Pocket ID group names to browser dashboard roles.
+type DashboardAuth struct {
+	Issuer       string `json:"issuer"`
+	ClientID     string `json:"client_id"`
+	ViewGroup    string `json:"view_group"`
+	OperateGroup string `json:"operate_group"`
 }
 
 // MCPOAuth configures the trusted Pocket ID issuer and protected MCP resource.
@@ -137,6 +146,21 @@ func (c Config) Validate() error {
 			origin.ForceQuery || origin.RawQuery != "" || origin.Fragment != "" ||
 			origin.String() != origin.Scheme+"://"+origin.Host {
 			return errors.New("dashboard_origin must be an HTTP or HTTPS origin")
+		}
+	}
+	if a := c.DashboardAuth; a != nil {
+		issuer, err := url.Parse(a.Issuer)
+		if err != nil || issuer.Scheme != "https" || issuer.Hostname() == "" || issuer.User != nil || strings.ContainsAny(a.Issuer, "?#") {
+			return errors.New("dashboard_auth.issuer must be an absolute HTTPS issuer URL")
+		}
+		if !strings.HasPrefix(c.DashboardOrigin, "https://") {
+			return errors.New("dashboard_auth requires an HTTPS dashboard_origin")
+		}
+		if c.MCPOAuth != nil && a.Issuer != c.MCPOAuth.Issuer {
+			return errors.New("dashboard_auth and mcp_oauth must use the same issuer")
+		}
+		if strings.TrimSpace(a.ClientID) == "" || strings.TrimSpace(a.ViewGroup) == "" || strings.TrimSpace(a.OperateGroup) == "" || a.ViewGroup == a.OperateGroup {
+			return errors.New("dashboard_auth requires a client_id and distinct, nonempty view_group and operate_group")
 		}
 	}
 	if err := validateListener(c.ManagementListen, "management_listen"); err != nil {

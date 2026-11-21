@@ -155,3 +155,30 @@ func TestMCPOAuthSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestDashboardAuthValidation(t *testing.T) {
+	cfg := validConfig(filepath.Join(t.TempDir(), "state"))
+	cfg.DashboardOrigin = "https://preview.test"
+	cfg.DashboardAuth = &DashboardAuth{Issuer: "https://id.test", ClientID: "browser", ViewGroup: "view", OperateGroup: "operate"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, edit := range []func(*Config){
+		func(c *Config) { c.DashboardOrigin = "http://preview.test" },
+		func(c *Config) { c.DashboardAuth.Issuer = "http://id.test" },
+		func(c *Config) { c.DashboardAuth.ClientID = "" },
+		func(c *Config) { c.DashboardAuth.ViewGroup = "" },
+		func(c *Config) { c.DashboardAuth.OperateGroup = c.DashboardAuth.ViewGroup },
+		func(c *Config) {
+			c.MCPOAuth = &MCPOAuth{Issuer: "https://other.test", Resource: "https://preview.test/mcp", JWKSURI: "https://other.test/keys"}
+		},
+	} {
+		candidate := cfg
+		auth := *cfg.DashboardAuth
+		candidate.DashboardAuth = &auth
+		edit(&candidate)
+		if err := candidate.Validate(); err == nil {
+			t.Fatal("accepted invalid dashboard configuration")
+		}
+	}
+}

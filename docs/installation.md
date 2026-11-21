@@ -240,3 +240,29 @@ For a project with one web process, configure the project entry in `/etc/preview
 The controller builds the root `Dockerfile` with the authorized checkout as its context and starts the image's default command. The application must listen on a container network interface and serve HTTP. If the built image exposes exactly one TCP port, the controller uses it. Otherwise set `public_port` to the internal TCP port. Docker allocates a separate loopback host port for each attempt. The stable preview hostname switches only after the candidate passes its health check.
 
 Use the default `compose` backend for projects with dependencies or multiple services. Its `compose_file`, `public_service`, interpolation settings and default internal port of 8080 still apply.
+
+### Dashboard sign-in with Pocket ID
+
+Omit `dashboard_auth` (or set it to `null`) for the default open dashboard. Everyone who can reach it can operate previews. To require browser sign-in, keep the private management hostname behind HTTPS and follow these steps.
+
+1. In Pocket ID, create View and Operate groups or reuse existing groups. Use each group's **Name** in the controller configuration. Pocket ID sends these names in the signed ID token when the client requests the `groups` scope. [Pocket ID scopes and claims](https://pocket-id.org/docs/guides/scopes-and-claims)
+2. Register a dedicated **public OIDC client** with PKCE enabled. Set its exact callback URL to `https://preview.example.com/dashboard/auth/callback`, substituting your management hostname. Allow both groups on this client. Keep the MCP client's existing operator-only group restriction.
+3. Add these top-level settings to the controller JSON, using the issuer and client ID from Pocket ID and your own group names. When MCP OAuth is enabled, both clients use the same issuer.
+
+```json
+{
+  "dashboard_origin": "https://preview.example.com",
+  "dashboard_auth": {
+    "issuer": "https://id.example.com",
+    "client_id": "your-dashboard-client-id",
+    "operate_group": "preview-operators",
+    "view_group": "preview-viewers"
+  }
+}
+```
+
+Restart the controller and open the dashboard. View members can read all dashboard pages, host metrics, events and live logs. Operate members can also archive, restore and delete previews. Operate wins when both groups match. Users in neither group receive no dashboard access.
+
+Group membership is checked at sign-in. A session expires at the earlier of one hour or ID token expiry. Signing out ends the local session and its streams. Restarting the controller clears all sessions. The next sign-in picks up group changes. The configured issuer must be reachable during startup for discovery.
+
+Dashboard authentication applies only to the dashboard. Keep the management listener private since REST reads still trust network access. MCP and preview hostnames retain their own access policies.
