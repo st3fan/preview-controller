@@ -1,6 +1,6 @@
 # Trying Keycloak for Preview Controller in an Arcane home lab
 
-Keycloak can host the login page, broker GitHub or Google sign-in, and issue access tokens for the existing Go MCP server. This lab uses one Keycloak container and one PostgreSQL container. Your existing Caddy terminates HTTPS. **You can try social login today.** Native MCP login requires the controller changes proposed in [Intent #72](https://github.com/st3fan/preview-controller/issues/72). The current controller accepts a shared deployment token.
+Keycloak can host the login page, broker GitHub or Google sign-in, and issue access tokens for the existing Go MCP server. This lab uses one Keycloak container and one PostgreSQL container. Caddy runs directly on the same Linux host and terminates HTTPS. **You can try social login today.** Native MCP login requires the controller changes proposed in [Intent #72](https://github.com/st3fan/preview-controller/issues/72). The current controller accepts a shared deployment token.
 
 ## Before opening Arcane
 
@@ -10,7 +10,7 @@ Compose creates a default network for the stack. Keycloak reaches PostgreSQL at 
 
 ## Create the Arcane project
 
-In **Projects → Create Project**, choose the Docker agent that will run Keycloak and name the project `preview-idp`. Paste this Compose file. PostgreSQL 17 stores its data at the volume path below. The Keycloak version is pinned because its MCP features are experimental. [Arcane projects](https://getarcane.app/docs/docker/projects) · [Keycloak containers](https://www.keycloak.org/server/containers) · [Supported databases](https://www.keycloak.org/server/db)
+In **Projects → Create Project**, choose the Docker agent on the Caddy host and name the project `preview-idp`. Paste this Compose file. PostgreSQL 17 stores its data at the volume path below. The Keycloak version is pinned because its MCP features are experimental. [Arcane projects](https://getarcane.app/docs/docker/projects) · [Keycloak containers](https://www.keycloak.org/server/containers) · [Supported databases](https://www.keycloak.org/server/db)
 
 ```yaml
 services:
@@ -49,7 +49,7 @@ services:
       KC_BOOTSTRAP_ADMIN_USERNAME: bootstrap-admin
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${IDP_BOOTSTRAP_PASSWORD:?Set IDP_BOOTSTRAP_PASSWORD}
     ports:
-      - "${IDP_BIND_IP:-127.0.0.1}:18080:8080"
+      - "127.0.0.1:18080:8080"
 
 volumes:
   pgdata: {}
@@ -59,17 +59,17 @@ Choose **Add .env file**. Replace each password placeholder with a different val
 
 ```dotenv
 IDP_HOST=id.example.net
-IDP_BIND_IP=127.0.0.1
+# Initial value for startup. Verify the peer address below.
 CADDY_SOURCE_IP=127.0.0.1
 IDP_DB_PASSWORD=<first-generated-value>
 IDP_BOOTSTRAP_PASSWORD=<second-generated-value>
 ```
 
-Choose the bind and proxy source addresses described below, then click **Create Project → Up**. In the project logs, wait for PostgreSQL to become healthy and Keycloak to finish startup. Its first start can take longer while it prepares the server and schema.
+Click **Create Project → Up**. In the project logs, wait for PostgreSQL to become healthy and Keycloak to finish startup. Its first start can take longer while it prepares the server and schema.
 
 ## Connect Caddy
 
-If Caddy runs directly on the same host or uses host networking, keep the loopback bind and add this site to your private Caddy configuration. Substitute your hostname and usual TLS settings.
+Add this site to the host’s existing Caddyfile. Substitute your hostname and usual TLS settings.
 
 ```caddyfile
 id.example.net {
@@ -77,9 +77,20 @@ id.example.net {
 }
 ```
 
-If Caddy is on another machine or in a separate bridge-networked container, use the same Docker host LAN address you use for your other apps. For example, if the Arcane host is `192.168.1.20`, set `IDP_BIND_IP=192.168.1.20` and use `reverse_proxy 192.168.1.20:18080`. Limit access to that published port to Caddy using your Docker-aware firewall. [Docker port publishing](https://docs.docker.com/engine/network/port-publishing/)
+Validate and reload Caddy with your usual host service commands. Caddy connects to the host’s loopback port 18080. Docker forwards that connection to Keycloak on port 8080. PostgreSQL is reachable within the Compose project at `db:5432`. [Docker port publishing](https://docs.docker.com/engine/network/port-publishing/)
 
-For either setup, set `CADDY_SOURCE_IP` to the address Keycloak sees traffic **from**. For a separate proxy host this is usually Caddy's LAN IP. With a host-local proxy, Docker may present the project bridge gateway. To find the gateway after the network exists, run `docker network inspect preview-idp_default --format '{{(index .IPAM.Config 0).Gateway}}'` on the Arcane host (adjust the project name if needed). If necessary, start with `CADDY_SOURCE_IP=127.0.0.1`, verify the actual source and update the project before testing sign-in. Validate and reload Caddy. [Keycloak reverse proxy guide](https://www.keycloak.org/server/reverseproxy)
+### Verify the address Keycloak should trust
+
+`CADDY_SOURCE_IP` is the immediate peer address seen by Keycloak. On Linux this is often the Compose bridge gateway. Check it once during setup:
+
+1. In Arcane, open the running Keycloak container’s network details and note its IPv4 address. On the Linux host, start this capture, replacing the example IP with that container address:
+
+   ```sh
+   sudo tcpdump -nni any 'dst host 172.18.0.3 and tcp dst port 8080'
+   ```
+
+2. From your workstation, open `https://id.example.net/realms/master/.well-known/openid-configuration` to send a request through Caddy. Stop the capture with Ctrl-C. A line like `172.18.0.1.54321 > 172.18.0.3.8080` means the peer IP is `172.18.0.1`. The trailing `54321` is the source port.
+3. Set `CADDY_SOURCE_IP` in the Arcane project’s .env to the **observed IP**, then redeploy to apply it. Recheck the address if the project network is recreated. [Keycloak reverse proxy guide](https://www.keycloak.org/server/reverseproxy)
 
 ## Create the realm and try GitHub sign-in
 
