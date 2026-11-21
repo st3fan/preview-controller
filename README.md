@@ -141,8 +141,9 @@ preview-owned build tags and retains shared images.
 ## Coding agents (MCP)
 
 Connect a Streamable HTTP MCP client to `/mcp` on the controller’s management
-address. Configure the client to send `Authorization: Bearer <deployment-token>`
+address. By default, configure the client to send `Authorization: Bearer <deployment-token>`
 on every request. The same credential grants access to all seven tools.
+For browser sign-in with individual operator identities, enable Pocket ID as described below.
 
 Use `list_projects` to match the checkout’s Git remote to a configured project
 ID, including before its first preview. Use `list_previews` or `get_preview`
@@ -161,6 +162,74 @@ up to 8 KiB of service output before cleanup under the existing diagnostic
 retention policy. Projects with configured Compose environment values suppress
 persisted output. Use `remove_preview`
 to permanently remove the environment and its history.
+
+### Pocket ID sign-in on the LAN or VPN
+
+Use one private HTTPS hostname for the dashboard, REST API and MCP. Restrict
+access to trusted operators on the LAN or VPN: dashboard actions and REST reads
+trust network access. For example, on a private Caddy ingress:
+
+```caddyfile
+preview.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+Use your management listener address and usual TLS settings. Keep the wildcard
+preview application hosts routed to the separate preview listener.
+
+1. In Pocket ID **Administration → APIs**, add **Preview Controller** with the exact
+   HTTPS resource URL including `/mcp`. Create the API permission
+   `preview:operate`. Create a Pocket ID user group for Preview Controller
+   operators and add the intended accounts to it.
+2. Restrict Pocket ID’s `CIMD_URL_ALLOWLIST` to the exact native client metadata
+   URLs you use. Codex can use
+   `https://chatgpt.com/oauth/codex/client.json` or a callback-specific URL.
+   If a client is missing from **Administration → OIDC Clients**, start a
+   sign-in to let Pocket ID fetch its metadata and create the entry.
+   For each client, set **Access → Allowed User Groups** to **Selected user
+   groups** and select only the operator group. Then grant the client
+   user-delegated API access to `preview:operate` under **Access → API Access**.
+   Keep the API-wide **Allow all metadata document clients** setting off,
+   and grant this permission only to operator-group-restricted clients.
+3. Add the following object to the controller settings. Copy `issuer` and
+   `jwks_uri` from the issuer’s `/.well-known/openid-configuration`. The
+   controller must trust the certificate at the signing-key URL. It supports
+   RS256 (the Pocket ID default), ES256 and EdDSA. Remove `operator_subjects`
+   if you configured an earlier version of this draft.
+
+```json
+"mcp_oauth": {
+  "issuer": "https://pocket-id.example.net",
+  "jwks_uri": "https://pocket-id.example.net/.well-known/jwks.json",
+  "resource": "https://preview.example.com/mcp"
+}
+```
+
+4. Restart the controller. From the workstation, request `/mcp` without
+   credentials. Its 401 challenge links to the protected-resource metadata.
+   Check that the metadata advertises the exact HTTPS resource and issuer.
+   From the trusted network, verify that the same host serves the dashboard at
+   `/` and the REST environment list at `/api/environments`.
+5. Remove any deployment-token header or bearer environment setting from the
+   client's MCP entry. In Codex, run `codex mcp add preview --url https://preview.example.com/mcp`
+   and `codex mcp login preview`. Complete the browser
+   passkey prompt and consent on the client workstation.
+6. Call `list_projects` in Codex. Repeat after restarting Codex and
+   after access-token expiry to verify refresh. Try Codex with a Pocket ID
+   user outside the operator group and confirm Pocket ID denies authorization.
+   A 401 with a token can indicate expiry, the wrong issuer or audience, or an
+   unverifiable signature. A valid access token missing `preview:operate`
+   receives 403.
+
+Operators with the permission have all seven tools, including permanent removal.
+The controller logs the issuer and subject for deployment and removal calls.
+In OAuth mode the shared deployment token works only on the private REST API.
+Manage onboarding and offboarding in Pocket ID by changing group membership.
+After removing an operator, verify that refresh and fresh authorization are
+denied for Codex. An already-issued signed access token can remain usable
+until it expires. Set the access token lifetime in Pocket ID to match the
+offboarding window you need.
 
 ## Deployment API
 

@@ -135,3 +135,23 @@ func TestProjectBackend(t *testing.T) {
 		t.Fatal("accepted unknown backend")
 	}
 }
+
+func TestMCPOAuthSettings(t *testing.T) {
+	valid := MCPOAuth{Issuer: "https://id.example.net", JWKSURI: "https://id.example.net/keys", Resource: "https://mcp.example.net/mcp"}
+	if err := valid.validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*MCPOAuth){
+		func(o *MCPOAuth) { o.Issuer = "http://issuer.test" },
+		func(o *MCPOAuth) { o.JWKSURI = "" },
+		func(o *MCPOAuth) { o.JWKSURI = "https://user@keys.test/" },
+		func(o *MCPOAuth) { o.Resource = "https://preview.test/mcp?" },
+		func(o *MCPOAuth) { o.Resource = "https://preview.test/%6dcp" },
+	} {
+		cfg := valid
+		change(&cfg)
+		if err := cfg.validate(); err == nil {
+			t.Fatalf("accepted invalid OAuth settings: %+v", cfg)
+		}
+	}
+}

@@ -26,6 +26,7 @@ var (
 
 // Config contains operator settings. Deployment state is stored separately.
 type Config struct {
+	MCPOAuth           *MCPOAuth          `json:"mcp_oauth,omitempty"`
 	ArchiveAfterIdle   string             `json:"archive_after_idle,omitempty"`
 	DeleteAfterArchive string             `json:"delete_after_archive,omitempty"`
 	DashboardOrigin    string             `json:"dashboard_origin,omitempty"`
@@ -38,6 +39,26 @@ type Config struct {
 	GitHubTokenEnv     string             `json:"github_token_env,omitempty"`
 	Projects           map[string]Project `json:"projects"`
 	token              string
+}
+
+// MCPOAuth configures the trusted Pocket ID issuer and protected MCP resource.
+type MCPOAuth struct {
+	Issuer   string `json:"issuer"`
+	Resource string `json:"resource"`
+	JWKSURI  string `json:"jwks_uri"`
+}
+
+func (o MCPOAuth) validate() error {
+	for name, value := range map[string]string{"issuer": o.Issuer, "resource": o.Resource, "jwks_uri": o.JWKSURI} {
+		u, err := url.Parse(value)
+		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || strings.ContainsAny(value, "?#") {
+			return fmt.Errorf("mcp_oauth.%s must be an absolute HTTPS URL without credentials, query or fragment", name)
+		}
+		if name == "resource" && u.EscapedPath() != "/mcp" {
+			return errors.New("mcp_oauth.resource must use the exact /mcp path")
+		}
+	}
+	return nil
 }
 
 const (
@@ -101,6 +122,11 @@ func Load(filename string) (Config, error) {
 func (c Config) Token() string { return c.token }
 
 func (c Config) Validate() error {
+	if c.MCPOAuth != nil {
+		if err := c.MCPOAuth.validate(); err != nil {
+			return err
+		}
+	}
 	if err := validateLifecycle(c.ArchiveAfterIdle, c.DeleteAfterArchive); err != nil {
 		return err
 	}
