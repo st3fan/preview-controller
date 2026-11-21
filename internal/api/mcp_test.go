@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,10 +18,10 @@ import (
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
-type fixtureRuntime struct{}
+type fixtureRuntime struct{ failStartup atomic.Bool }
 
-func (fixtureRuntime) Verify(context.Context, string, string) error { return nil }
-func (fixtureRuntime) Run(_ context.Context, _ string, _ int64, _ config.Project, a state.Attempt, progress runtime.Progress) (runtime.Result, error) {
+func (*fixtureRuntime) Verify(context.Context, string, string) error { return nil }
+func (f *fixtureRuntime) Run(_ context.Context, _ string, _ int64, _ config.Project, a state.Attempt, progress runtime.Progress) (runtime.Result, error) {
 	if err := progress(state.Building, runtime.Result{}); err != nil {
 		return runtime.Result{}, err
 	}
@@ -28,10 +29,20 @@ func (fixtureRuntime) Run(_ context.Context, _ string, _ int64, _ config.Project
 		return runtime.Result{Diagnostic: &state.Diagnostic{Stage: state.BuildStage, Summary: "Fixture build failed", Output: "fixture compiler error"}}, errors.New("fixture build failed")
 	}
 	result := runtime.Result{Port: 12345}
-	return result, progress(state.Starting, result)
+	if err := progress(state.Starting, result); err != nil {
+		return result, err
+	}
+	if f.failStartup.Load() {
+		result.Diagnostic = &state.Diagnostic{Stage: state.StartStage, Summary: "startup failed", ServiceOutput: "startup marker " + a.ID}
+		return result, errors.New("startup failed")
+	}
+	return result, nil
 }
-func (fixtureRuntime) Cleanup(context.Context, string, int64, state.Attempt) error { return nil }
-func (fixtureRuntime) HealthyPort(_ context.Context, a state.Attempt, _ config.Project) (int, error) {
+func (*fixtureRuntime) CleanupFailed(context.Context, string, int64, config.Project, state.Attempt, *state.Diagnostic) error {
+	return nil
+}
+func (*fixtureRuntime) Cleanup(context.Context, string, int64, state.Attempt) error { return nil }
+func (*fixtureRuntime) HealthyPort(_ context.Context, a state.Attempt, _ config.Project) (int, error) {
 	return a.Port, nil
 }
 
@@ -48,7 +59,8 @@ func TestMCPWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.Config{PreviewDomain: "preview.example.com", Projects: map[string]config.Project{"demo": {Repository: "https://github.com/example/demo.git"}}}
-	service, err := deploy.New(cfg, store, fixtureRuntime{}, fixtureRuntime{})
+	runner := new(fixtureRuntime)
+	service, err := deploy.New(cfg, store, runner, runner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +90,8 @@ func TestMCPWorkflow(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer session.Close()
-	if !strings.Contains(session.InitializeResult().Instructions, "confirm active_commit matches") {
+	instructions := session.InitializeResult().Instructions
+	if !strings.Contains(instructions, "returned ID to report healthy") || !strings.Contains(instructions, "confirm active_commit matches") {
 		t.Fatal("missing readiness instructions")
 	}
 	tools, err := session.ListTools(ctx, nil)
@@ -114,11 +127,14 @@ func TestMCPWorkflow(t *testing.T) {
 		t.Fatal(previews)
 	}
 	good := strings.Repeat("a", 40)
+	var healthyID string
 	for _, tc := range []struct {
-		sha    string
-		status state.Status
-	}{{good, state.Healthy}, {strings.Repeat("b", 40), state.Failed}} {
-		args := submitInput{preview, tc.sha, "request-" + tc.sha}
+		request string
+		sha     string
+		status  state.Status
+	}{{"first", good, state.Healthy}, {"build-failure", strings.Repeat("b", 40), state.Failed}, {"same-sha-startup-failure", good, state.Failed}} {
+		runner.failStartup.Store(tc.request == "same-sha-startup-failure")
+		args := submitInput{preview, tc.sha, tc.request}
 		var submitted, retried deploymentView
 		call("deploy_preview", args, &submitted)
 		call("deploy_preview", args, &retried)
@@ -140,17 +156,29 @@ func TestMCPWorkflow(t *testing.T) {
 		}
 		var current previewView
 		call("get_preview", preview, &current)
-		if current.ActiveCommit != good || current.Latest == nil || current.Latest.Commit != tc.sha || current.URL != "https://demo-54.preview.example.com" {
+		if current.ActiveCommit != good || current.Latest == nil || current.Latest.Status != tc.status || current.Latest.ID != submitted.ID || current.Latest.Commit != tc.sha || current.URL != "https://demo-54.preview.example.com" {
 			t.Fatal(current)
 		}
 		var logs logResult
 		call("get_deployment_logs", id, &logs)
-		if tc.status == state.Failed {
+		if tc.request == "same-sha-startup-failure" {
+			if submitted.ID == healthyID || logs.ServiceStatus != "available" || logs.ServiceOutput != "startup marker "+submitted.ID {
+				t.Fatal(submitted.ID, logs)
+			}
+			var serving deploymentView
+			call("get_deployment", deploymentInput{healthyID}, &serving)
+			if serving.Status != state.Healthy || serving.Commit != tc.sha {
+				t.Fatal(serving)
+			}
+		} else if tc.status == state.Failed {
 			if logs.Diagnostic == nil || logs.Diagnostic.Output != "fixture compiler error" || logs.ServiceStatus != "unavailable" {
 				t.Fatal(logs)
 			}
-		} else if logs.ServiceOutput != "output for "+submitted.ID {
-			t.Fatal(logs)
+		} else {
+			healthyID = submitted.ID
+			if logs.ServiceOutput != "output for "+submitted.ID {
+				t.Fatal(logs)
+			}
 		}
 	}
 	var removed removal

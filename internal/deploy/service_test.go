@@ -31,6 +31,9 @@ func (f fakeRunner) Run(_ context.Context, _ string, _ int64, _ config.Project, 
 	return result, f.err
 }
 
+func (f fakeRunner) CleanupFailed(ctx context.Context, project string, intent int64, _ config.Project, a state.Attempt, _ *state.Diagnostic) error {
+	return f.Cleanup(ctx, project, intent, a)
+}
 func (f fakeRunner) Cleanup(context.Context, string, int64, state.Attempt) error {
 	return f.cleanupErr
 }

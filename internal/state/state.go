@@ -56,9 +56,10 @@ const (
 )
 
 type Diagnostic struct {
-	Stage   FailureStage `json:"stage"`
-	Summary string       `json:"summary"`
-	Output  string       `json:"output,omitempty"`
+	ServiceOutput string       `json:"service_output,omitempty"`
+	Stage         FailureStage `json:"stage"`
+	Summary       string       `json:"summary"`
+	Output        string       `json:"output,omitempty"`
 }
 
 type Environment struct {

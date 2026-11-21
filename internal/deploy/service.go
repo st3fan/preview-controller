@@ -38,6 +38,7 @@ type Verifier interface {
 }
 
 type Runner interface {
+	CleanupFailed(context.Context, string, int64, config.Project, state.Attempt, *state.Diagnostic) error
 	Run(context.Context, string, int64, config.Project, state.Attempt, runtime.Progress) (runtime.Result, error)
 	Cleanup(context.Context, string, int64, state.Attempt) error
 	HealthyPort(context.Context, state.Attempt, config.Project) (int, error)
@@ -291,13 +292,15 @@ func (s *Service) verify(project string, intent int64, id, repository, commit st
 	previous, err := s.activate(project, intent, candidate, result)
 	if err != nil {
 		cleanup, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		cleanupErr := s.runner.Cleanup(cleanup, project, intent, candidate)
+		diagnostic := &state.Diagnostic{Stage: state.CutoverStage, Summary: "Could not activate the candidate."}
+		candidate.ComposeProject = result.ComposeProject
+		cleanupErr := s.runner.CleanupFailed(cleanup, project, intent, s.cfg.Projects[project], candidate, diagnostic)
 		cancel()
 		message := "proxy cutover failed: " + bounded(err.Error())
 		if cleanupErr != nil {
 			message += "; cleanup: " + bounded(cleanupErr.Error())
 		}
-		if updateErr := s.recordFailure(project, intent, id, message, &state.Diagnostic{Stage: state.CutoverStage, Summary: "Could not activate the candidate."}); updateErr != nil {
+		if updateErr := s.recordFailure(project, intent, id, message, diagnostic); updateErr != nil {
 			slog.Error("record cutover failure", "deployment", id, "error", updateErr)
 		}
 		return
@@ -515,6 +518,9 @@ func (s *Service) updateWithResult(project string, intent int64, id string, stat
 				diagnostic := *result.Diagnostic
 				if token := s.cfg.Token(); token != "" && strings.Contains(diagnostic.Output, token) {
 					diagnostic.Output = ""
+				}
+				if token := s.cfg.Token(); token != "" && strings.Contains(diagnostic.ServiceOutput, token) {
+					diagnostic.ServiceOutput = ""
 				}
 				if env.Diagnostics == nil {
 					env.Diagnostics = make(map[string]state.Diagnostic)

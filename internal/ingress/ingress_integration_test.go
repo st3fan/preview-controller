@@ -103,6 +103,11 @@ func testFullPreviewLifecycle(t *testing.T, backend string) {
 	first := commit("first", fixture("index.html"), compose)
 	second := commit("second", "second", compose)
 	bad := commit("invalid candidate", "bad", compose+"    privileged: true\n")
+	var startupFailure string
+	if backend == config.BackendCompose {
+		failing := strings.Replace(compose, "    build: .", "    build: .\n    command: [sh, -c, 'echo startup-marker-54 >&2 && exit 1']", 1)
+		startupFailure = commit("failed startup", "failed startup", failing)
+	}
 	cutoverFailure := commit("cutover failure", "third", compose)
 	root := t.TempDir()
 	store, err := state.New(filepath.Join(root, "state"))
@@ -292,6 +297,18 @@ func testFullPreviewLifecycle(t *testing.T, backend string) {
 		t.Fatalf("failed candidate changed active commit: %s", env.ActiveCommit)
 	}
 	preview(123, "second")
+	if startupFailure != "" {
+		a := submit(123, startupFailure)
+		env := wait(123, a.ID, state.Failed)
+		d := env.Diagnostics[a.ID]
+		if d.Stage != state.StartStage || !strings.Contains(d.ServiceOutput, "startup-marker-54") || env.ActiveCommit != second {
+			t.Fatalf("failed startup: %+v, active %s", d, env.ActiveCommit)
+		}
+		a.ComposeProject = "pv" + strings.TrimPrefix(a.ID, "deployment-")
+		if _, err := baseRunner.LogExcerpt(t.Context(), a); !errors.Is(err, runtime.ErrLogsUnavailable) {
+			t.Fatalf("expected failed container to be removed, got %v", err)
+		}
+	}
 	cutoverAttempt := submit(123, cutoverFailure)
 	if env := wait(123, cutoverAttempt.ID, state.Failed); env.ActiveCommit != second {
 		t.Fatalf("failed cutover changed active commit: %s", env.ActiveCommit)

@@ -152,11 +152,14 @@ Reuse that ID when retrying a lost response. Choose a new ID for a deliberate
 redeployment. Retry identities are scoped to the project and Intent and last
 for the lifetime of its deployment history.
 
-Poll `get_deployment` with the returned deployment ID. Before reporting ready,
+Poll `get_deployment` with the returned deployment ID. Require that specific attempt to report `healthy`. Before reporting ready,
 call `get_preview` and confirm `active_commit` matches the requested SHA. The
 stable URL may still serve the previous revision during or after a failed
 replacement. Use `get_deployment_logs` for the exact attempt’s retained
-diagnostics and bounded service output, when available. Use `remove_preview`
+diagnostics and bounded service output, when available. Failed attempts retain
+up to 8 KiB of service output before cleanup under the existing diagnostic
+retention policy. Projects with configured Compose environment values suppress
+persisted output. Use `remove_preview`
 to permanently remove the environment and its history.
 
 ## Deployment API

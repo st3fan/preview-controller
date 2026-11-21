@@ -77,13 +77,9 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 		return result, err
 	}
 	result.Workspace = filepath.Join(r.root, projectName, strconv.FormatInt(intent, 10), attempt.ID)
-	defer func() {
-		if err != nil && result.Diagnostic == nil {
-			result.Diagnostic = &state.Diagnostic{Stage: state.PrepareStage, Summary: "Could not prepare the deployment."}
-		}
-	}()
 	checkout := filepath.Join(result.Workspace, "source")
 	if err := os.MkdirAll(result.Workspace, 0700); err != nil {
+		result.Diagnostic = &state.Diagnostic{Stage: state.PrepareStage, Summary: "Could not prepare the deployment."}
 		return result, err
 	}
 	defer func() {
@@ -91,7 +87,11 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 			logger.Debug("cleaning up failed candidate")
 			cleanup, done := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer done()
-			if cleanupErr := r.Cleanup(cleanup, projectName, intent, attempt); cleanupErr != nil {
+			if result.Diagnostic == nil {
+				result.Diagnostic = &state.Diagnostic{Stage: state.PrepareStage, Summary: "Could not prepare the deployment."}
+			}
+			attempt.ComposeProject = result.ComposeProject
+			if cleanupErr := r.CleanupFailed(cleanup, projectName, intent, cfg, attempt, result.Diagnostic); cleanupErr != nil {
 				err = errors.Join(err, fmt.Errorf("cleanup candidate: %w", cleanupErr))
 			}
 		}
@@ -129,6 +129,18 @@ func (r *Runtime) Run(ctx context.Context, projectName string, intent int64, cfg
 		return result, errStartupHealth
 	}
 	return result, nil
+}
+
+// CleanupFailed retains available attempt-owned service output before removing containers.
+func (r *Runtime) CleanupFailed(ctx context.Context, projectName string, intent int64, cfg config.Project, attempt state.Attempt, diagnostic *state.Diagnostic) error {
+	// Follow the existing policy for persisting diagnostics from projects with operator-supplied environment values.
+	if len(cfg.ComposeEnv) == 0 && len(cfg.ComposeEnvFrom) == 0 {
+		output, err := r.LogExcerpt(ctx, attempt)
+		if err == nil {
+			diagnostic.ServiceOutput = output
+		}
+	}
+	return r.Cleanup(ctx, projectName, intent, attempt)
 }
 
 func (r *Runtime) Cleanup(ctx context.Context, projectName string, intent int64, attempt state.Attempt) error {

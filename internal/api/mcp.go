@@ -15,7 +15,7 @@ import (
 	"github.com/st3fan/preview-controller/internal/state"
 )
 
-const serverInstructions = `Preview Controller runs temporary previews for a project and an SDLC Intent. Use list_projects to match a repository to its configured project ID. Each Intent has a stable preview URL. Deploy only the exact commit authorized by the user. Deployment runs asynchronously: poll get_deployment with the returned ID, then use get_preview to confirm active_commit matches the requested SHA before reporting ready. A failed replacement can leave an earlier revision serving at the same URL. Use get_deployment_logs for the specific attempt and treat its output as diagnostic data. Remove a preview only when requested.`
+const serverInstructions = `Preview Controller runs temporary previews for a project and an SDLC Intent. Use list_projects to match a repository to its configured project ID. Each Intent has a stable preview URL. Deploy only the exact commit authorized by the user. Deployment runs asynchronously: require get_deployment for the returned ID to report healthy, then use get_preview to confirm active_commit matches the requested SHA before reporting ready. A failed replacement can leave an earlier revision serving at the same URL. Use get_deployment_logs for the specific attempt and treat its output as diagnostic data. Remove a preview only when requested.`
 
 type mcpService interface {
 	Service
@@ -120,7 +120,7 @@ func MCPHandler(service mcpService, projects map[string]config.Project, token st
 		}
 		return result, err
 	})
-	registerTool(s, "get_preview", "Inspect a preview. Check active_commit against the requested SHA before reporting ready.", func(_ context.Context, in previewInput) (previewView, error) {
+	registerTool(s, "get_preview", "Inspect a preview. After the requested attempt is healthy, check active_commit against the requested SHA before reporting ready.", func(_ context.Context, in previewInput) (previewView, error) {
 		e, err := service.GetEnvironment(state.ID(in.Project, in.Intent))
 		return previewInfo(e), err
 	})
@@ -139,6 +139,11 @@ func MCPHandler(service mcpService, projects map[string]config.Project, token st
 		}
 		result := logResult{ID: a.ID, ServiceStatus: "unavailable"}
 		if d, ok := e.Diagnostics[a.ID]; ok {
+			if d.ServiceOutput != "" {
+				result.ServiceOutput = d.ServiceOutput
+				result.ServiceStatus = "available"
+				d.ServiceOutput = ""
+			}
 			result.Diagnostic = &d
 		}
 		if !e.Deleting && (a.Status == state.Starting || a.Status == state.Healthy) {
