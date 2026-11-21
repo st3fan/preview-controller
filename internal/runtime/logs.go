@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"syscall"
 	"time"
@@ -17,7 +16,7 @@ var ErrLogsUnavailable = errors.New("deployment logs unavailable")
 
 // OpenLogs checks for containers belonging to the attempt and prepares a log
 // follow that can run after the caller has sent the response headers.
-func (r *Runtime) OpenLogs(ctx context.Context, attempt state.Attempt) (func(io.Writer) error, error) {
+func (r composeBackend) logs(ctx context.Context, attempt state.Attempt) (func(io.Writer) error, error) {
 	if !attemptID.MatchString(attempt.ID) ||
 		attempt.ComposeProject != "pv"+strings.TrimPrefix(attempt.ID, "deployment-") {
 		return nil, ErrLogsUnavailable
@@ -32,9 +31,15 @@ func (r *Runtime) OpenLogs(ctx context.Context, attempt state.Attempt) (func(io.
 	if strings.TrimSpace(containers) == "" {
 		return nil, ErrLogsUnavailable
 	}
+	return r.followLogs(ctx, false, "compose", "-p", attempt.ComposeProject, "logs", "--no-color", "--tail", "100", "--follow"), nil
+}
+
+func (r *Runtime) followLogs(ctx context.Context, stderr bool, args ...string) func(io.Writer) error {
 	return func(output io.Writer) error {
-		cmd := exec.CommandContext(ctx, "docker", "compose", "-p", attempt.ComposeProject,
-			"logs", "--no-color", "--tail", "100", "--follow")
+		cmd := r.dockerCommand(ctx, args...)
+		if stderr {
+			cmd.Stderr = output
+		}
 		// The Docker CLI launches Compose as a child process. Cancel both so
 		// an idle follow cannot outlive the HTTP request.
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -46,8 +51,7 @@ func (r *Runtime) OpenLogs(ctx context.Context, attempt state.Attempt) (func(io.
 			return err
 		}
 		cmd.Dir = r.dockerConfig
-		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "DOCKER_CONFIG=" + r.dockerConfig}
 		cmd.Stdout = output
 		return cmd.Run()
-	}, nil
+	}
 }

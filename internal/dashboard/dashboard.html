@@ -64,7 +64,7 @@
     <dl><dt>Latest deployment</dt><dd>{{with .Latest}}{{template "badge" (outcome .Status)}}
       {{if not .UpdatedAt.IsZero}}<time class="sub" datetime="{{.UpdatedAt.UTC.Format "2006-01-02T15:04:05Z"}}">{{.UpdatedAt.UTC.Format "15:04 UTC"}}</time>{{end}}
       {{else}}No attempts{{end}}</dd></dl>
-    <dl class="environment-type"><dt>Type</dt><dd>Compose</dd></dl>
+    <dl class="environment-type"><dt>Type</dt><dd>{{.BackendName}}</dd></dl>
     <dl><dt>Schedule</dt><dd>{{if .Deadline}}{{if .Archived}}Delete{{else}}Archive{{end}}
       <time datetime="{{.Deadline.UTC.Format "2006-01-02T15:04:05Z"}}" title="{{.Deadline.UTC.Format "Jan 2, 2006 15:04 UTC"}}">{{.Deadline.UTC.Format "Jan 2, 15:04 UTC"}}</time>
       {{else}}—{{end}}</dd></dl>

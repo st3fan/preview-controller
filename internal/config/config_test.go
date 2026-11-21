@@ -113,3 +113,25 @@ func TestLifecycleSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectBackend(t *testing.T) {
+	p := Project{Repository: "https://github.com/example/web", HealthPath: "/"}
+	if p.DeploymentBackend() != BackendCompose || p.Validate() == nil {
+		t.Fatal("default backend must validate Compose settings")
+	}
+	p.Backend = BackendDocker
+	for _, port := range []int{0, 3000} {
+		p.PublicPort = port
+		if err := p.Validate(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.ComposeFile = "compose.yaml"
+	if p.Validate() == nil {
+		t.Fatal("accepted Compose settings on Docker project")
+	}
+	p.Backend = "unknown"
+	if p.Validate() == nil {
+		t.Fatal("accepted unknown backend")
+	}
+}

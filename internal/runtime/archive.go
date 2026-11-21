@@ -11,9 +11,10 @@ import (
 
 	"github.com/st3fan/preview-controller/internal/config"
 	"github.com/st3fan/preview-controller/internal/state"
+	"gopkg.in/yaml.v3"
 )
 
-func (r *Runtime) Stop(ctx context.Context, attempt state.Attempt) error {
+func (r composeBackend) stop(ctx context.Context, attempt state.Attempt) error {
 	if !attemptID.MatchString(attempt.ID) {
 		return errors.New("invalid deployment identity")
 	}
@@ -54,26 +55,26 @@ func (r *Runtime) Stop(ctx context.Context, attempt state.Attempt) error {
 	return err
 }
 
-func (r *Runtime) Restore(ctx context.Context, project string, intent int64, cfg config.Project, attempt state.Attempt) (int, error) {
+func (r composeBackend) restore(ctx context.Context, project string, intent int64, cfg config.Project, attempt state.Attempt) (int, error) {
 	if !attemptID.MatchString(attempt.ID) || intent < 1 || project == "" || strings.ContainsAny(project, "/\\.") {
 		return 0, errors.New("invalid deployment identity")
 	}
 	workspace := filepath.Join(r.root, project, strconv.FormatInt(intent, 10), attempt.ID)
-	source := filepath.Join(workspace, "source", cfg.ComposeFile)
-	targetPort := cfg.ContainerPort()
-	envFile, err := writeComposeEnv(workspace, cfg, targetPort)
+	// The prepared file records the services, dependencies and loopback port
+	// selected for this attempt, including for attempts saved before backend
+	// selection existed. Starting its existing containers needs no build,
+	// environment interpolation or access to current Compose settings.
+	manifest, service, target, err := restoreManifest(workspace)
 	if err != nil {
 		return 0, err
 	}
-	defer os.Remove(envFile)
-	args := []string{"compose", "--project-directory", filepath.Dir(source), "--env-file", envFile, "-p", projectNameForAttempt(attempt), "-f", filepath.Join(workspace, "preview-compose.yaml")}
-	run := func(command ...string) (string, error) {
-		return r.runDocker(ctx, 2<<20, len(cfg.ComposeEnv) > 0 || len(cfg.ComposeEnvFrom) > 0, append(args, command...)...)
-	}
+	defer os.Remove(manifest)
+	args := []string{"compose", "--env-file", os.DevNull, "-p", projectNameForAttempt(attempt), "-f", manifest}
+	run := func(command ...string) (string, error) { return r.docker(ctx, 64<<10, append(args, command...)...) }
 	if _, err := run("start", "--wait", "--wait-timeout", "180"); err != nil {
 		return 0, fmt.Errorf("restart archived stack: %w", err)
 	}
-	output, err := run("port", cfg.PublicService, strconv.Itoa(targetPort))
+	output, err := run("port", service, target)
 	if err != nil {
 		return 0, fmt.Errorf("read restored public port: %w", err)
 	}
@@ -85,6 +86,62 @@ func (r *Runtime) Restore(ctx context.Context, project string, intent int64, cfg
 		return 0, errStartupHealth
 	}
 	return port, nil
+}
+
+// Project only the fields Compose needs to start an existing stack. The image
+// placeholder satisfies Compose validation. The start command never creates,
+// builds or pulls an image.
+func restoreManifest(workspace string) (filename, service, target string, err error) {
+	type serviceSpec struct {
+		Image     string   `yaml:"image"`
+		DependsOn any      `yaml:"depends_on,omitempty"`
+		Ports     []string `yaml:"ports,omitempty"`
+	}
+	var model struct {
+		Services map[string]*serviceSpec `yaml:"services"`
+	}
+	data, err := os.ReadFile(filepath.Join(workspace, "preview-compose.yaml"))
+	if err != nil {
+		return "", "", "", err
+	}
+	if err := yaml.Unmarshal(data, &model); err != nil {
+		return "", "", "", err
+	}
+	for name, spec := range model.Services {
+		if spec == nil {
+			return "", "", "", errors.New("invalid saved Compose service")
+		}
+		spec.Image = "unused"
+		if len(spec.Ports) == 0 {
+			continue
+		}
+		if len(spec.Ports) != 1 || service != "" {
+			return "", "", "", errors.New("ambiguous saved public service")
+		}
+		port, ok := strings.CutPrefix(spec.Ports[0], "127.0.0.1::")
+		n, err := strconv.Atoi(port)
+		if !ok || err != nil || n < 1 || n > 65535 {
+			return "", "", "", errors.New("invalid saved public port")
+		}
+		service, target = name, port
+	}
+	if service == "" {
+		return "", "", "", errors.New("missing saved public service")
+	}
+	data, err = yaml.Marshal(model)
+	if err != nil {
+		return "", "", "", err
+	}
+	f, err := os.CreateTemp(workspace, "restore-*.yaml")
+	if err != nil {
+		return "", "", "", err
+	}
+	_, writeErr := f.Write(data)
+	if err := errors.Join(writeErr, f.Close()); err != nil {
+		os.Remove(f.Name())
+		return "", "", "", err
+	}
+	return f.Name(), service, target, nil
 }
 
 func projectNameForAttempt(attempt state.Attempt) string {

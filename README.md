@@ -3,10 +3,11 @@
 A self-hosted controller for stable preview environments associated with SDLC Intents.
 
 The controller accepts an authenticated candidate commit, verifies it in an
-allowlisted public GitHub repository, and builds a separate Docker Compose
-stack. When the new stack passes health checks, its stable preview URL switches
-to the new loopback port. The previous stack stays available if the candidate
-fails.
+allowlisted public GitHub repository, and builds an isolated Compose stack or a single Docker container.
+The stable preview URL switches to the new loopback port after health checks pass.
+The previous preview stays available if the candidate fails.
+
+For Dockerfile-only applications, see [single-container Docker projects](docs/installation.md#single-container-docker-projects).
 
 For a prebuilt image, see [Portainer installation](docs/installation.md#portainer-with-a-published-image).
 

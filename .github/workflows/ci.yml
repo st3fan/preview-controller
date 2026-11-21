@@ -19,6 +19,14 @@ jobs:
           go-version-file: go.mod
       - run: go test ./...
       - run: go vet ./...
+      - name: Install the controller image's Compose plugin
+        run: |
+          base=$(awk '/^FROM docker:/{print $2}' Dockerfile)
+          docker run --rm --entrypoint cat "$base" /usr/local/libexec/docker/cli-plugins/docker-compose > "$RUNNER_TEMP/docker-compose"
+          sudo install -D -m 0755 "$RUNNER_TEMP/docker-compose" /usr/local/lib/docker/cli-plugins/docker-compose
+          docker compose start --help | grep -q -- --wait-timeout
+      - name: Verify preview lifecycle on Docker Engine
+        run: go test -tags=integration -timeout=30m ./internal/runtime ./internal/ingress
 
   image:
     runs-on: ubuntu-24.04
