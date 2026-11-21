@@ -186,8 +186,7 @@ mcp.example.net {
    `preview:operate`. Create a Pocket ID user group for Preview Controller
    operators and add the intended accounts to it.
 2. Restrict Pocket ID’s `CIMD_URL_ALLOWLIST` to the exact native client metadata
-   URLs you use. Claude Code uses
-   `https://claude.ai/oauth/claude-code-client-metadata`. Codex can use
+   URLs you use. Codex can use
    `https://chatgpt.com/oauth/codex/client.json` or a callback-specific URL.
    If a client is missing from **Administration → OIDC Clients**, start a
    sign-in to let Pocket ID fetch its metadata and create the entry.
@@ -216,12 +215,10 @@ mcp.example.net {
    Verify the MCP hostname returns 404 for the dashboard and REST paths.
 5. Remove any deployment-token header or bearer environment setting from the
    client's MCP entry. In Codex, run `codex mcp add preview --url https://mcp.example.net/mcp`
-   and `codex mcp login preview`. In Claude Code, run
-   `claude mcp add --transport http preview https://mcp.example.net/mcp`,
-   then open `/mcp`, select **preview**, and authenticate. Complete the browser
+   and `codex mcp login preview`. Complete the browser
    passkey prompt and consent on the client workstation.
-6. Call `list_projects` in each client. Repeat after restarting the client and
-   after access-token expiry to verify refresh. Try both clients with a Pocket ID
+6. Call `list_projects` in Codex. Repeat after restarting Codex and
+   after access-token expiry to verify refresh. Try Codex with a Pocket ID
    user outside the operator group and confirm Pocket ID denies authorization.
    A 401 with a token can indicate expiry, the wrong issuer or audience, or an
    unverifiable signature. A valid access token missing `preview:operate`
@@ -232,7 +229,7 @@ The controller logs the issuer and subject for deployment and removal calls.
 In OAuth mode the shared deployment token works only on the private REST API.
 Manage onboarding and offboarding in Pocket ID by changing group membership.
 After removing an operator, verify that refresh and fresh authorization are
-denied for both clients. An already-issued signed access token can remain usable
+denied for Codex. An already-issued signed access token can remain usable
 until it expires. Set the access token lifetime in Pocket ID to match the
 offboarding window you need.
 
