@@ -24,6 +24,8 @@ var files embed.FS
 var templates = template.Must(template.New("pages").Funcs(template.FuncMap{
 	"controllerBuild": controllerBuild,
 	"outcome":         attemptOutcome,
+	"elapsedTime":     elapsedTime,
+	"pullMergeTiming": pullMergeTiming,
 	"isFragment":      func(url string) bool { return strings.HasPrefix(url, "#") },
 }).ParseFS(files, "*.html"))
 
