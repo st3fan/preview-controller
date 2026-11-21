@@ -53,16 +53,30 @@
       {{else if $.GitHub.Partial}}<p>Related issues unavailable.</p>
       {{else}}<p>No linked sub-issues.</p>{{end}}
       <h3>Pull requests</h3>
+      <p>The first linked PR opening is an estimate of when work started. These durations measure calendar time.</p>
+      <dl class="timing">
+        {{if not .CreatedAt.IsZero}}<div><dt>Intent opened</dt><dd>{{template "attempt-time" .CreatedAt}}</dd></div>{{end}}
+        {{with $.FirstLinkedPull}}
+        <div><dt>First linked PR opened</dt><dd><a href="{{$.RepositoryURL}}/pull/{{.Number}}" target="_blank" rel="noopener">#{{.Number}}{{template "new-tab"}}</a> · {{template "attempt-time" .CreatedAt}}</dd></div>
+        <div><dt>Elapsed time to first linked PR</dt><dd>{{elapsedTime $.GitHub.Intent.CreatedAt .CreatedAt}}</dd></div>
+        {{else}}<div><dt>Elapsed time to first linked PR</dt><dd>Timing unavailable</dd></div>{{end}}
+      </dl>
       {{if $.GitHub.Pulls}}
       {{if $.GitHub.Ordered}}<ol>{{else}}<p>Stack order unavailable.</p><ul>{{end}}
         {{range $.GitHub.Pulls}}
-        <li><a href="{{$.RepositoryURL}}/pull/{{.Number}}" target="_blank" rel="noopener">#{{.Number}} {{.Title}}{{template "new-tab"}}</a> · {{.State}}</li>
+        <li><a href="{{$.RepositoryURL}}/pull/{{.Number}}" target="_blank" rel="noopener">#{{.Number}} {{.Title}}{{template "new-tab"}}</a> · {{.State}}
+          <dl class="timing">
+            {{if not .CreatedAt.IsZero}}<div><dt>PR opened</dt><dd>{{template "attempt-time" .CreatedAt}}</dd></div>{{end}}
+            {{with .MergedAt}}{{if not .IsZero}}<div><dt>PR merged</dt><dd>{{template "attempt-time" .}}</dd></div>{{end}}{{end}}
+            <div><dt>Elapsed time to merge</dt><dd>{{pullMergeTiming .}}</dd></div>
+          </dl>
+        </li>
         {{end}}
       {{if $.GitHub.Ordered}}</ol>{{else}}</ul>{{end}}
       {{else if $.GitHub.Partial}}<p>Linked pull requests unavailable.</p>
       {{else}}<p>No linked pull requests.</p>{{end}}
       {{if $.GitHub.Partial}}<p>GitHub returned incomplete results.</p>{{end}}
-      {{else}}<p>GitHub metadata unavailable.</p>{{end}}
+      {{else}}<p>GitHub metadata unavailable.</p><p>Elapsed time to first linked PR is unavailable.</p>{{end}}
       <p><a href="#activity">Activity timeline</a></p>
       </div>
     </section>

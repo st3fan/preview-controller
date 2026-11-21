@@ -86,6 +86,7 @@ func TestDetailGitHubMetadata(t *testing.T) {
 	}}
 	load := func(string, int64) (state.Environment, error) { return env, nil }
 	mux := http.NewServeMux()
+	partial := true
 	registerDetail(mux, cfg, load, health.New(nil, nil, nil), func(_ context.Context, repository string, intent int64) githubmeta.Result {
 		if repository != "example/alpha" || intent != 51 {
 			t.Fatalf("unexpected lookup %s #%d", repository, intent)
@@ -106,7 +107,7 @@ func TestDetailGitHubMetadata(t *testing.T) {
 					CreatedAt: opened.Add(3 * time.Minute), MergedAt: new(opened.Add(7 * time.Minute))},
 				earlier,
 			},
-			Partial: true,
+			Partial: partial,
 		}
 	})
 	request := httptest.NewRequest(http.MethodGet, "/dashboard/previews/alpha/51", nil)
@@ -118,7 +119,8 @@ func TestDetailGitHubMetadata(t *testing.T) {
 	}
 	requireText(t, page, "&lt;script&gt;live title&lt;/script&gt;", "https://github.com/example/alpha/issues/52",
 		"https://github.com/example/alpha/pull/57", "&lt;b&gt;Pull request&lt;/b&gt;", "MERGED", "CLOSED",
-		"Stack order unavailable.", "GitHub returned incomplete results.", "#activity")
+		"Stack order unavailable.", "GitHub returned incomplete results.", "#activity",
+		"<dt>Elapsed time to first linked PR</dt><dd>Timing unavailable</dd>", "<dt>Elapsed time to merge</dt><dd>4m0s</dd>")
 
 	_, timeline, _ := strings.Cut(page, "<h2 id=\"activity\">Activity timeline</h2>")
 	timeline, _, _ = strings.Cut(timeline, "</section>")
@@ -134,6 +136,15 @@ func TestDetailGitHubMetadata(t *testing.T) {
 		timeline = remaining
 	}
 
+	partial = false
+	resp = httptest.NewRecorder()
+	mux.ServeHTTP(resp, request)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("complete history returned HTTP %d", resp.Code)
+	}
+	requireText(t, resp.Body.String(), "<dt>Intent opened</dt>", "<dt>First linked PR opened</dt>",
+		"<dt>Elapsed time to first linked PR</dt><dd>1m0s</dd>")
+
 	mux = http.NewServeMux()
 	registerDetail(mux, cfg, load, health.New(nil, nil, nil), func(context.Context, string, int64) githubmeta.Result { return githubmeta.Result{} })
 	resp = httptest.NewRecorder()
@@ -142,6 +153,7 @@ func TestDetailGitHubMetadata(t *testing.T) {
 		t.Fatalf("fallback returned HTTP %d", resp.Code)
 	}
 	requireText(t, resp.Body.String(), "Deployment title", "GitHub metadata unavailable.", "GitHub activity is unavailable.",
+		"Elapsed time to first linked PR is unavailable.",
 		"Deployment requested", "Preview activated", "Deployment failed", "<dt>Time to preview</dt><dd>1m0s</dd>")
 }
 
