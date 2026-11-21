@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -31,13 +30,7 @@ func protectOAuthMCP(mux *http.ServeMux, cfg config.MCPOAuth, next http.Handler)
 		ResourceMetadataURL: strings.TrimSuffix(cfg.Resource, "/mcp") + metadataPath,
 		Scopes:              []string{operatorScope},
 	}
-	authenticated := auth.RequireBearerToken(accessTokenVerifier(cfg, keys), options)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !slices.Contains(cfg.OperatorSubjects, auth.TokenInfoFromContext(r.Context()).UserID) {
-			http.Error(w, "operator access denied", http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(w, r)
-	}))
+	authenticated := auth.RequireBearerToken(accessTokenVerifier(cfg, keys), options)(next)
 	// Config validation requires an HTTPS URL with exactly the /mcp path.
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.EqualFold("https://"+r.Host+"/mcp", cfg.Resource) {

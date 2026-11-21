@@ -32,7 +32,7 @@ func newFixtureIssuer(t *testing.T) *fixtureIssuer {
 		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{f.key.Load().Public()}})
 	}))
 	t.Cleanup(server.Close)
-	f.cfg = config.MCPOAuth{Issuer: "https://issuer.test", Resource: "https://preview.test/mcp", JWKSURI: server.URL, OperatorSubjects: []string{"operator"}}
+	f.cfg = config.MCPOAuth{Issuer: "https://issuer.test", Resource: "https://preview.test/mcp", JWKSURI: server.URL}
 	return f
 }
 
@@ -111,7 +111,6 @@ func TestOAuthAccess(t *testing.T) {
 		{"wrong audience", "aud", "https://preview.test/", 401},
 		{"missing subject", "sub", "", 401},
 		{"machine subject", "sub", "client-fixture", 401},
-		{"other user", "sub", "other", 403},
 		{"missing permission", "scope", "openid", 403},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -135,10 +134,11 @@ func TestOAuthAccess(t *testing.T) {
 	if w := request("/mcp", token); w.Code != http.StatusMethodNotAllowed {
 		t.Fatal(w)
 	}
-	f.cfg.OperatorSubjects = nil
-	mux = http.NewServeMux()
-	RegisterMCP(mux, nil, nil, "legacy", &f.cfg, nil)
-	if w := request("/mcp", token); w.Code != 403 {
+	// Pocket ID controls eligibility. A different human subject with the
+	// API permission reaches the transport without a local account entry.
+	claims := f.claims()
+	claims["sub"] = "another-operator"
+	if w := request("/mcp", f.sign(t, "at+jwt", claims)); w.Code != http.StatusMethodNotAllowed {
 		t.Fatal(w)
 	}
 }

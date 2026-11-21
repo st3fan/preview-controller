@@ -41,12 +41,11 @@ type Config struct {
 	token              string
 }
 
-// MCPOAuth binds operator subjects to a single trusted Pocket ID issuer.
+// MCPOAuth configures the trusted Pocket ID issuer and protected MCP resource.
 type MCPOAuth struct {
-	Issuer           string   `json:"issuer"`
-	Resource         string   `json:"resource"`
-	JWKSURI          string   `json:"jwks_uri"`
-	OperatorSubjects []string `json:"operator_subjects"`
+	Issuer   string `json:"issuer"`
+	Resource string `json:"resource"`
+	JWKSURI  string `json:"jwks_uri"`
 }
 
 func (o MCPOAuth) validate() error {
@@ -57,11 +56,6 @@ func (o MCPOAuth) validate() error {
 		}
 		if name == "resource" && u.EscapedPath() != "/mcp" {
 			return errors.New("mcp_oauth.resource must use the exact /mcp path")
-		}
-	}
-	for _, sub := range o.OperatorSubjects {
-		if strings.TrimSpace(sub) == "" || sub != strings.TrimSpace(sub) || strings.HasPrefix(sub, "client-") {
-			return errors.New("mcp_oauth.operator_subjects must contain human Pocket ID subjects")
 		}
 	}
 	return nil

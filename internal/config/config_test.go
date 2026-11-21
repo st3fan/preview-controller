@@ -147,7 +147,6 @@ func TestMCPOAuthSettings(t *testing.T) {
 		func(o *MCPOAuth) { o.JWKSURI = "https://user@keys.test/" },
 		func(o *MCPOAuth) { o.Resource = "https://preview.test/mcp?" },
 		func(o *MCPOAuth) { o.Resource = "https://preview.test/%6dcp" },
-		func(o *MCPOAuth) { o.OperatorSubjects = []string{"client-machine"} },
 	} {
 		cfg := valid
 		change(&cfg)
