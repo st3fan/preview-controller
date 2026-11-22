@@ -8,7 +8,7 @@
   {{template "page-assets"}}
 </head>
 <body>
-  {{template "masthead"}}
+  {{template "masthead" .}}
   {{template "host-bar" .Host}}
   <main class="wrap">
     <nav class="crumb" aria-label="Breadcrumb"><a href="/">Preview environments</a> / {{.Project}} / #{{.Intent}}</nav>

@@ -33,6 +33,7 @@ func (a detailAttempt) TimeToPreview() string {
 }
 
 type detailView struct {
+	SignedIn    bool
 	Host        hostSnapshot
 	BackendName string
 	state.Environment
@@ -79,7 +80,7 @@ func registerDetail(mux *http.ServeMux, sample func() hostSnapshot, cfg config.C
 			http.Error(w, "Could not load preview", http.StatusServiceUnavailable)
 			return
 		}
-		data := detailView{BackendName: backendName(env), Environment: env, Health: monitor.Lookup(env), IssueTitle: submittedTitle(env.Attempts)}
+		data := detailView{SignedIn: requestRole(r) != "", BackendName: backendName(env), Environment: env, Health: monitor.Lookup(env), IssueTitle: submittedTitle(env.Attempts)}
 		if projectConfig, ok := cfg.Projects[project]; ok {
 			if repository, err := url.Parse(projectConfig.Repository); err == nil {
 				name := strings.TrimSuffix(strings.Trim(repository.Path, "/"), ".git")

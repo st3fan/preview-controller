@@ -58,10 +58,17 @@ func run(settings string) error {
 	defer stop()
 	monitor := health.New(store, cfg.Projects, runner.ProbeHealth)
 	managementMux := http.NewServeMux()
-	dashboard.Register(managementMux, ctx, cfg, store.Load, service.ListEnvironments, store.Changes, monitor)
-	dashboard.RegisterLogs(managementMux, ctx, store.Load, runner.OpenLogs)
-	dashboard.RegisterDelete(managementMux, service.DeleteEnvironment)
-	dashboard.RegisterArchive(managementMux, service.ArchiveEnvironment, service.RestoreEnvironment)
+	dashboardMux := http.NewServeMux()
+	dashboard.Register(dashboardMux, ctx, cfg, store.Load, service.ListEnvironments, store.Changes, monitor)
+	dashboard.RegisterLogs(dashboardMux, ctx, store.Load, runner.OpenLogs)
+	dashboard.RegisterDelete(dashboardMux, service.DeleteEnvironment)
+	dashboard.RegisterArchive(dashboardMux, service.ArchiveEnvironment, service.RestoreEnvironment)
+	dashboardHandler, err := dashboard.WithAccess(ctx, cfg, dashboardMux)
+	if err != nil {
+		return err
+	}
+	managementMux.Handle("GET /{$}", dashboardHandler)
+	managementMux.Handle("/dashboard/", dashboardHandler)
 	api.RegisterMCP(managementMux, service, cfg.Projects, cfg.Token(), cfg.MCPOAuth, runner.LogExcerpt)
 	managementMux.Handle("/", api.Handler(service, cfg.Token()))
 	management := &http.Server{

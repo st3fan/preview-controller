@@ -30,6 +30,7 @@ var templates = template.Must(template.New("pages").Funcs(template.FuncMap{
 }).ParseFS(files, "*.html"))
 
 type environment struct {
+	CanOperate     bool
 	BackendName    string
 	Project        string
 	Archived       bool
@@ -56,6 +57,7 @@ type project struct {
 }
 
 type view struct {
+	SignedIn      bool
 	Host          hostSnapshot
 	Unavailable   bool
 	Projects      []project
@@ -84,14 +86,19 @@ func Register(mux *http.ServeMux, shutdown context.Context, cfg config.Config, d
 }
 
 func registerDashboard(mux *http.ServeMux, sample func() hostSnapshot, shutdown context.Context, projects map[string]config.Project, list func() ([]state.Environment, error), changes func() <-chan struct{}, monitor *health.Monitor, titles *issueTitles) {
-	load := func() view {
+	load := func(r *http.Request) view {
+		role := requestRole(r)
+		data := view{SignedIn: role != ""}
 		envs, err := list()
 		if err != nil {
-			return view{Unavailable: true}
+			data.Unavailable = true
+			return data
 		}
-		var data view
+
 		for _, env := range envs {
-			row := environment{BackendName: backendName(env),
+			row := environment{
+				CanOperate:     role == "" || role == roleOperate,
+				BackendName:    backendName(env),
 				Project:        env.Project,
 				Health:         monitor.Lookup(env),
 				Archived:       env.DeleteAt != nil,
@@ -139,9 +146,9 @@ func registerDashboard(mux *http.ServeMux, sample func() hostSnapshot, shutdown 
 		}
 		return data
 	}
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		var page bytes.Buffer
-		data := load()
+		data := load(r)
 		data.Host = sample()
 		if err := templates.ExecuteTemplate(&page, "page", data); err != nil {
 			http.Error(w, "Could not render dashboard", http.StatusInternalServerError)
@@ -158,7 +165,7 @@ func registerDashboard(mux *http.ServeMux, sample func() hostSnapshot, shutdown 
 			w.Header().Set("Content-Type", "text/event-stream")
 			return
 		}
-		stream(w, r, shutdown, load, changes, monitor.Changes, titles.changes)
+		stream(w, r, shutdown, func() view { return load(r) }, changes, monitor.Changes, titles.changes)
 	})
 	mux.HandleFunc("GET /dashboard/host", func(w http.ResponseWriter, r *http.Request) {
 		setPageHeaders(w)

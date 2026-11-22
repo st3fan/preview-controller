@@ -166,8 +166,7 @@ to permanently remove the environment and its history.
 ### Pocket ID sign-in on the LAN or VPN
 
 Use one private HTTPS hostname for the dashboard, REST API and MCP. Restrict
-access to trusted operators on the LAN or VPN: dashboard actions and REST reads
-trust network access. For example, on a private Caddy ingress:
+access to trusted operators on the LAN or VPN: REST reads and the default open dashboard trust network access. For example, on a private Caddy ingress:
 
 ```caddyfile
 preview.example.com {
@@ -234,7 +233,7 @@ offboarding window you need.
 ## Deployment API
 
 The management API and operator dashboard are restricted to the configured home-lab listener.
-Anyone who can reach the dashboard can archive, restore, or delete previews. Keep the management
+By default, anyone who can reach the dashboard can archive, restore, or delete previews. To require browser sign-in and grant read-only access, follow the [dashboard Pocket ID setup](docs/installation.md#dashboard-sign-in-with-pocket-id). Keep the management
 listener accessible only to trusted operators.
 Open `/` on that listener to see preview links, active commits, and live deployment
 status grouped by project. Select **Live logs** next to a deployment attempt to
