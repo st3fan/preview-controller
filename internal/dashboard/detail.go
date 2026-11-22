@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -57,7 +56,7 @@ func liveActionsAvailable(env state.Environment) bool {
 
 func registerDetailPage(mux *http.ServeMux, sample func() hostSnapshot, cfg config.Config, load func(string, int64) (state.Environment, error), monitor *health.Monitor) {
 	var lookup func(context.Context, string, int64) githubmeta.Result
-	if token := os.Getenv(cfg.GitHubTokenEnv); strings.TrimSpace(token) != "" {
+	if token := cfg.GitHubToken(); token != "" {
 		lookup = githubmeta.New(token).Lookup
 	}
 	registerDetail(mux, sample, cfg, load, monitor, lookup)
@@ -109,14 +108,12 @@ func registerDetail(mux *http.ServeMux, sample func() hostSnapshot, cfg config.C
 				data.Recent = append(data.Recent, item)
 			}
 		}
-		if data.RepositoryURL != "" && cfg.GitHubTokenEnv != "" {
+		if data.RepositoryURL != "" && lookup != nil {
 			data.GitHubEnabled = true
-			if lookup != nil {
-				repositoryName := strings.TrimPrefix(data.RepositoryURL, "https://github.com/")
-				data.GitHub = lookup(r.Context(), repositoryName, intent)
-				if issue := data.GitHub.Intent; issue != nil && issue.Title != "" {
-					data.IssueTitle = issue.Title
-				}
+			repositoryName := strings.TrimPrefix(data.RepositoryURL, "https://github.com/")
+			data.GitHub = lookup(r.Context(), repositoryName, intent)
+			if issue := data.GitHub.Intent; issue != nil && issue.Title != "" {
+				data.IssueTitle = issue.Title
 			}
 		}
 		data.buildActivity()

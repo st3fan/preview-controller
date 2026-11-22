@@ -14,24 +14,55 @@ Do not place unrelated workloads or secrets on this host.
 - For systemd, a dedicated service account that can access the Docker daemon. Membership in
   the `docker` group grants powerful host access; restrict it to this host.
 
+## Docker Compose
+
+Follow the [Compose quickstart](../README.md#run-with-docker-compose) to copy the examples, set your secrets and start the controller. After editing either file, run `docker compose up -d --force-recreate` to reload the environment and remount the current projects file.
+
+The controller uses host networking to reach loopback preview ports. Keep both listeners on loopback when Caddy runs on the same host. The controller mounts the rootful Docker socket, which grants access to the host and to controller credentials. Preview services run as separate projects.
+
+Keep the workspace at the same absolute path inside and outside the controller, in a dedicated directory with no symlink components. The host daemon resolves checkout bind mounts at that path. Keep the Compose project name stable so upgrades reuse its named `state` volume. Stopping the controller leaves previews running. Remove previews through the API before uninstalling.
+
+## Controller settings
+
+For Compose, set the following in `.env` beside the manifest. Portainer accepts the same values as stack variables. Native installs supply them through the process environment. Empty values use the defaults below.
+
+| Old JSON setting | Environment variable | Default or requirement |
+| --- | --- | --- |
+| `management_listen` | `PREVIEW_MANAGEMENT_LISTEN` | `127.0.0.1:8080`, loopback or private IP and port |
+| `preview_listen` | `PREVIEW_LISTEN` | `127.0.0.1:8081`, a separate loopback or private listener |
+| `preview_domain` | `PREVIEW_DOMAIN` | Required DNS suffix for preview hosts |
+| `state_root` | `PREVIEW_STATE_ROOT` | `/var/lib/preview-server`, the named state volume’s mount target |
+| `workspace_root` | `PREVIEW_SERVER_WORKSPACE` | `/srv/preview-server`, absolute host and container workspace path |
+| `deployment_token_env` | `PREVIEW_SERVER_TOKEN` | Required deployment bearer token value |
+| `github_token_env` | `PREVIEW_GITHUB_TOKEN` | Optional GitHub metadata token value |
+| `archive_after_idle` | `PREVIEW_ARCHIVE_AFTER_IDLE` | `168h`, positive Go duration |
+| `delete_after_archive` | `PREVIEW_DELETE_AFTER_ARCHIVE` | `168h`, positive Go duration |
+| `dashboard_origin` | `PREVIEW_DASHBOARD_ORIGIN` | Optional browser-reachable origin. HTTPS required for dashboard sign-in |
+| `dashboard_auth.issuer` | `PREVIEW_DASHBOARD_ISSUER` | HTTPS Pocket ID issuer |
+| `dashboard_auth.client_id` | `PREVIEW_DASHBOARD_CLIENT_ID` | Public browser client ID |
+| `dashboard_auth.view_group` | `PREVIEW_DASHBOARD_VIEW_GROUP` | View group name |
+| `dashboard_auth.operate_group` | `PREVIEW_DASHBOARD_OPERATE_GROUP` | Distinct Operate group name |
+| `mcp_oauth.issuer` | `PREVIEW_MCP_ISSUER` | HTTPS Pocket ID issuer |
+| `mcp_oauth.resource` | `PREVIEW_MCP_RESOURCE` | Exact HTTPS management URL ending in the path `/mcp` |
+| `mcp_oauth.jwks_uri` | `PREVIEW_MCP_JWKS_URI` | HTTPS signing-key URL |
+
+Set all four dashboard sign-in variables and the HTTPS origin together. Leaving the four empty enables the open dashboard. Set all three MCP variables together to enable OAuth. Leaving all three empty enables bearer-token MCP. When both use Pocket ID, their issuer URLs must match.
+
+`PREVIEW_PROJECTS_FILE` selects the host bind source for Compose (default `./projects.json`) or Portainer (default `/etc/preview-server/projects.json`). Both mount it read-only at `/etc/preview-server/projects.json`. For project-specific `compose_env_from` variables, add each source name to the controller service’s `environment` list and supply its value in the local environment or stack variables. Keep the operator's files private. Use single quotes around literal values containing dollar signs in Compose’s `.env`.
+
+For local builds, optionally set `PREVIEW_CONTROLLER_REVISION` to the Git commit for the dashboard. Without it the dashboard displays “Development build”. Portainer requires `PREVIEW_SERVER_IMAGE` as described below.
+
+## Migrate from the combined settings file
+
+1. Before upgrading, record the existing Compose project or Portainer stack name, actual state volume and mount target, absolute workspace path, and settings file location (previously configurable with `PREVIEW_SERVER_CONFIG`). Keep a backup of the settings and state. Reuse the same volume and paths. Existing state files and deployment history use the same format.
+2. In a private directory, copy the old file’s `projects` object into `projects.json`. For example, on a host with jq, run `(umask 077; jq -e '.projects | objects' /etc/preview-server.json > projects.json)` with a fresh destination. Preserve every slug and project entry, including lifecycle overrides and environment mappings.
+3. Copy `.env.example` to a private `.env`. Transfer every configured global field using the table above. For custom token variable names, copy the **values** of the formerly named variables into the two fixed token variables. Retain any project-specific environment sources. Copy all dashboard and MCP auth settings before startup so each endpoint retains its access policy.
+4. Point `PREVIEW_PROJECTS_FILE` at the new file. Review the mount paths and project or stack name before recreating the controller. Validate locally with `docker compose config --quiet`. Apply with `docker compose up -d --build --force-recreate` or redeploy the same Portainer stack. Keep the existing state volume attached throughout.
+5. Check for HTTP 204 at the management listener’s `/healthz`, then verify existing previews, history and sign-in from the dashboard. Native installs perform the same settings transfer into the service environment file and update the startup command below.
+
 ## Native executable and systemd
 
-From the repository checkout, build with
-`GOOS=linux CGO_ENABLED=0 go build -o preview-server ./cmd/preview-server`
-and install the executable at `/usr/local/bin/preview-server`. For a new
-installation, create `/etc/preview-server.json` from
-[`config/preview-server.example.json`](../config/preview-server.example.json)
-in the same checkout so the executable and example use the same settings schema.
-Set both listeners to loopback when Caddy runs on the same host. Set
-`state_root` and `workspace_root` to separate, dedicated directories owned by
-the service account. Place the bearer token in `/etc/preview-server.env` with
-mode `0600`:
-
-```sh
-PREVIEW_SERVER_TOKEN=replace-with-a-long-random-secret
-```
-
-An example systemd unit is:
+Build with `GOOS=linux CGO_ENABLED=0 go build -o preview-server ./cmd/preview-server` and install at `/usr/local/bin/preview-server`. Install `projects.json` at `/etc/preview-server/projects.json` with read access for the service account. Give that account write access to both storage roots. Place controller variables and any project-specific sources in the root-owned, mode `0600` file `/etc/preview-server.env` using systemd EnvironmentFile syntax. The binary reads the process environment directly. After updating the unit, run `systemctl daemon-reload` and restart the service.
 
 ```ini
 [Unit]
@@ -45,7 +76,7 @@ Type=simple
 User=preview-server
 SupplementaryGroups=docker
 EnvironmentFile=/etc/preview-server.env
-ExecStart=/usr/local/bin/preview-server -config /etc/preview-server.json
+ExecStart=/usr/local/bin/preview-server -projects /etc/preview-server/projects.json
 Restart=on-failure
 UMask=0077
 NoNewPrivileges=true
@@ -55,65 +86,14 @@ ProtectHome=true
 WantedBy=multi-user.target
 ```
 
-## Docker Compose
-
-Run the shipped Compose definition from the repository checkout on the Linux
-preview host. It builds the controller image locally. Copy the
-[example JSON](../config/preview-server.example.json) to
-`/etc/preview-server.json` and configure your project allowlist and preview
-domain. Keep these settings for the shipped definition:
-
-- `state_root` is `/var/lib/preview-server`, backed by the Compose `state` volume.
-- `workspace_root` is `/srv/preview-server`. Create this as a real directory on
-  the host. The controller runs as root in the shipped image, so use
-  `sudo install -d -o root -g root -m 0700 /srv/preview-server` for a new workspace.
-- `deployment_token_env` is `PREVIEW_SERVER_TOKEN`.
-
-To use a different config file, export `PREVIEW_SERVER_CONFIG` with its absolute
-host path. To use a different workspace, export `PREVIEW_SERVER_WORKSPACE` with
-the same absolute path as `workspace_root`. The host daemon resolves preview bind
-mounts using that path, so use a dedicated host directory with no symlink
-components. Keep the state and workspace paths separate.
-
-Load the deployment token into the shell environment before starting the service.
-For an interactive Bash session:
-
-```bash
-read -rsp 'Deployment token: ' PREVIEW_SERVER_TOKEN
-export PREVIEW_SERVER_TOKEN
-PREVIEW_CONTROLLER_REVISION=$(git rev-parse HEAD) docker compose up -d --build
-unset PREVIEW_SERVER_TOKEN
-```
-
-The build uses `PREVIEW_CONTROLLER_REVISION` to show the checkout’s short commit hash in the dashboard. Images built without revision metadata display “Development build”. Published release images include the release tag and revision.
-
-Supply the same token when recreating the service. Any variables referenced by
-`compose_env_from` also need to be passed through the controller service environment.
-Treat access to Docker as access to the controller's environment and credentials.
-
-The controller uses host networking to reach preview ports on the host's loopback
-interface. Keep both JSON listeners on loopback when Caddy runs on the same host.
-The controller service mounts the rootful host Docker socket, which grants
-host-level control. Preview services still use the controller's restricted Compose
-policy and run as separate projects.
-
-Keep the same Compose project name across upgrades so the controller reuses its
-state volume. Remove active previews through the management API before uninstalling.
-Stopping the controller leaves preview projects running, and removing the named
-state volume discards the controller's deployment records.
-
 ## Portainer with a published image
 
 Use a Portainer Docker Standalone environment on a dedicated Linux host
-running amd64 or arm64. Prepare `/etc/preview-server.json` using
-`config/preview-server.example.json` from the GitHub Release's source tree.
-Configure the public repository allowlist and the preview domain. Use the
-[state, workspace and token settings above](#docker-compose), including
-creating the workspace directory on the host.
+running amd64 or arm64. Prepare `/etc/preview-server/projects.json` on the Docker host from `config/projects.example.json` in the release source tree, and create the workspace directory as in the Compose quickstart.
 
 1. Create a stack in Portainer and paste the contents of
    `compose.portainer.yaml` from the same release into the web editor.
-2. Set the stack environment variables `PREVIEW_SERVER_IMAGE` and
+2. Set the stack environment variables `PREVIEW_DOMAIN`, `PREVIEW_SERVER_IMAGE` and
    `PREVIEW_SERVER_TOKEN`. Use the exact `ghcr.io/st3fan/preview-controller@sha256:…`
    reference from the **Publish release image** workflow summary to pin the
    multi-platform index digest. You can also use the release version tag,
@@ -129,7 +109,7 @@ creating the workspace directory on the host.
 The stack uses host networking, the host Docker socket, a read-only settings
 file and a named state volume. The workspace bind uses the same absolute path
 inside and outside the controller so the host daemon can resolve mounts for
-preview services. Use the optional `PREVIEW_SERVER_CONFIG` and
+preview services. Use the optional `PREVIEW_PROJECTS_FILE` and
 `PREVIEW_SERVER_WORKSPACE` stack variables to customize host paths.
 
 ### Publishing and verifying a release image
@@ -159,7 +139,7 @@ certificate, a Caddyfile route can be:
 }
 ```
 
-Match the Caddy upstream to `preview_listen`. Keep the management API on its
+Match the Caddy upstream to `PREVIEW_LISTEN`. Keep the management API on its
 own home-lab or loopback listener, for example `127.0.0.1:8080`. Caddy does not
 need to reload when previews are created or replaced; the Go controller reads
 the active route from JSON state. Do not route the management API through the
@@ -173,36 +153,9 @@ identifies the previous working preview. To remove an environment, send an
 authenticated `DELETE /api/environments/{project}/{intent}`. Retry the same
 request if Docker cleanup reports a failure.
 
-## Recover from an unknown settings field
-
-If startup fails with `decode settings: json: unknown field "preview_listen"`,
-the installed executable may predate the settings file. A typo or an
-unsupported field can produce the same error.
-
-1. On the preview host, run `systemctl cat preview-server` to review the unit
-   and its drop-ins. Find the executable path in the loaded service settings with
-   `systemctl show -p ExecStart preview-server`. For the example unit above,
-   inspect it with `go version -m /usr/local/bin/preview-server`. If Go is only
-   installed on the build machine, copy the installed binary there for inspection.
-2. Compare the reported `vcs.revision`, if present, with `git rev-parse HEAD`
-   in the checkout that supplied the settings example. If revision metadata is
-   absent, rebuild from the intended checkout to establish which revision is installed.
-3. Run the build command above from that checkout. On the preview host, use
-   `sudo install -m 0755 preview-server /usr/local/bin/preview-server`, substituting
-   the executable path from `ExecStart` if it differs. Keep the existing settings
-   file. If an unknown field persists, compare the settings with the example
-   from the build checkout and correct the field while preserving your local values.
-4. Run `sudo systemctl restart preview-server` and check
-   `systemctl status preview-server` for successful startup.
-
 ## GitHub metadata
 
-To enable GitHub titles on the dashboard and live GitHub information on detail pages, set
-`"github_token_env": "PREVIEW_GITHUB_TOKEN"` in the controller's JSON settings
-and pass `PREVIEW_GITHUB_TOKEN` in the controller process environment. For systemd
-use the service's environment file. The supplied Compose files pass
-`PREVIEW_GITHUB_TOKEN` through from the Compose environment, including a local
-`.env` file or a Portainer stack variable. Use a fine-grained token restricted to the configured
+To enable GitHub titles and live metadata on detail pages, set `PREVIEW_GITHUB_TOKEN` in the controller environment. Use a fine-grained token restricted to the configured
 repositories with read access to Issues and Pull requests.
 
 The dashboard uses the newest nonempty `issue_title` supplied by a deployment.
@@ -227,7 +180,7 @@ available when the live title cannot be fetched.
 
 ### Single-container Docker projects
 
-For a project with one web process, configure the project entry in `/etc/preview-server.json` like this:
+For a project with one web process, configure the project entry in `projects.json` like this:
 
 ```json
 {
@@ -243,25 +196,21 @@ Use the default `compose` backend for projects with dependencies or multiple ser
 
 ### Dashboard sign-in with Pocket ID
 
-Omit `dashboard_auth` (or set it to `null`) for the default open dashboard. Everyone who can reach it can operate previews. To require browser sign-in, keep the private management hostname behind HTTPS and follow these steps.
+Leave the dashboard sign-in variables empty for the default open dashboard. Everyone who can reach it can operate previews. To require browser sign-in, keep the private management hostname behind HTTPS and follow these steps.
 
 1. In Pocket ID, create View and Operate groups or reuse existing groups. Use each group's **Name** in the controller configuration. Pocket ID sends these names in the signed ID token when the client requests the `groups` scope. [Pocket ID scopes and claims](https://pocket-id.org/docs/guides/scopes-and-claims)
 2. Register a dedicated **public OIDC client** with PKCE enabled. Set its exact callback URL to `https://preview.example.com/dashboard/auth/callback`, substituting your management hostname. Allow both groups on this client. Keep the MCP client's existing operator-only group restriction.
-3. Add these top-level settings to the controller JSON, using the issuer and client ID from Pocket ID and your own group names. When MCP OAuth is enabled, both clients use the same issuer.
+3. Set these variables in the controller environment, using the issuer and client ID from Pocket ID and your own group names. When MCP OAuth is enabled, both clients use the same issuer.
 
-```json
-{
-  "dashboard_origin": "https://preview.example.com",
-  "dashboard_auth": {
-    "issuer": "https://id.example.com",
-    "client_id": "your-dashboard-client-id",
-    "operate_group": "preview-operators",
-    "view_group": "preview-viewers"
-  }
-}
+```dotenv
+PREVIEW_DASHBOARD_ORIGIN=https://preview.example.com
+PREVIEW_DASHBOARD_ISSUER=https://id.example.com
+PREVIEW_DASHBOARD_CLIENT_ID=your-dashboard-client-id
+PREVIEW_DASHBOARD_OPERATE_GROUP=preview-operators
+PREVIEW_DASHBOARD_VIEW_GROUP=preview-viewers
 ```
 
-Restart the controller and open the dashboard. View members can read all dashboard pages, host metrics, events and live logs. Operate members can also archive, restore and delete previews. Operate wins when both groups match. Users in neither group receive no dashboard access.
+Recreate the Compose service (or restart the native service) and open the dashboard. View members can read all dashboard pages, host metrics, events and live logs. Operate members can also archive, restore and delete previews. Operate wins when both groups match. Users in neither group receive no dashboard access.
 
 Group membership is checked at sign-in. A session expires at the earlier of one hour or ID token expiry. Signing out ends the local session and its streams. Restarting the controller clears all sessions. The next sign-in picks up group changes. The configured issuer must be reachable during startup for discovery.
 

@@ -1,0 +1,9 @@
+{
+  "myproject": {
+    "repository": "https://github.com/example/myproject.git",
+    "compose_file": "compose.preview.yaml",
+    "public_service": "web",
+    "public_port": 8080,
+    "health_path": "/healthz"
+  }
+}

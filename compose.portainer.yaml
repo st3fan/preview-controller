@@ -4,12 +4,27 @@ services:
     restart: unless-stopped
     network_mode: host
     environment:
+      - PREVIEW_DOMAIN
       - PREVIEW_SERVER_TOKEN
       - PREVIEW_GITHUB_TOKEN
+      - PREVIEW_MANAGEMENT_LISTEN
+      - PREVIEW_LISTEN
+      - PREVIEW_SERVER_WORKSPACE
+      - PREVIEW_STATE_ROOT
+      - PREVIEW_ARCHIVE_AFTER_IDLE
+      - PREVIEW_DELETE_AFTER_ARCHIVE
+      - PREVIEW_DASHBOARD_ORIGIN
+      - PREVIEW_DASHBOARD_ISSUER
+      - PREVIEW_DASHBOARD_CLIENT_ID
+      - PREVIEW_DASHBOARD_VIEW_GROUP
+      - PREVIEW_DASHBOARD_OPERATE_GROUP
+      - PREVIEW_MCP_ISSUER
+      - PREVIEW_MCP_RESOURCE
+      - PREVIEW_MCP_JWKS_URI
     volumes:
       - type: bind
-        source: ${PREVIEW_SERVER_CONFIG:-/etc/preview-server.json}
-        target: /etc/preview-server.json
+        source: ${PREVIEW_PROJECTS_FILE:-/etc/preview-server/projects.json}
+        target: /etc/preview-server/projects.json
         read_only: true
         bind:
           create_host_path: false
@@ -25,7 +40,7 @@ services:
           create_host_path: false
       - type: volume
         source: state
-        target: /var/lib/preview-server
+        target: ${PREVIEW_STATE_ROOT:-/var/lib/preview-server}
 
 volumes:
   state:

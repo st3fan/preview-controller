@@ -4,7 +4,7 @@
 
 - Build the controller as a Go service. Prefer standard-library HTTP handlers and server-rendered HTML; use `html/template` and locally served HTMX for the operator dashboard.
 - Use `net/http/httputil.ReverseProxy` to route each preview hostname to its healthy local application port. Caddy terminates HTTPS and forwards preview requests to the controller; the controller does not modify Caddy configuration.
-- Keep global settings in `/etc/preview-server.json`. Persist each environment's state and deployment history as an atomically written JSON file under a configured root, such as `<state-root>/<project>/<intent>.json`. Docker remains the source of truth for container runtime state. Do not use SQLite.
+- Read controller-wide settings from the process environment and project definitions from a read-only `projects.json`. Docker Compose is the primary installation and loads local operator settings from `.env`. Persist each environment's state and deployment history as an atomically written JSON file under a configured root, such as `<state-root>/<project>/<intent>.json`. Docker remains the source of truth for container runtime state. Do not use SQLite.
 - Fetch only allowlisted public GitHub repositories over HTTPS using `github.com/go-git/go-git/v6`. Check out the exact authorized commit with the Go library; do not invoke the Git CLI or require Git credentials for the first version.
 - Build the exact checkout locally. Projects select a deployment backend. Compose is the default for isolated application stacks with multiple services. The Docker backend builds the repository-root Dockerfile and runs one web container on an attempt-specific bridge network.
 

@@ -16,7 +16,11 @@ import (
 	"time"
 )
 
-const DefaultPath = "/etc/preview-server.json"
+const (
+	DefaultProjectsPath     = "/etc/preview-server/projects.json"
+	deploymentTokenVariable = "PREVIEW_SERVER_TOKEN"
+	githubTokenVariable     = "PREVIEW_GITHUB_TOKEN"
+)
 
 var (
 	projectName = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
@@ -26,20 +30,19 @@ var (
 
 // Config contains operator settings. Deployment state is stored separately.
 type Config struct {
-	DashboardAuth      *DashboardAuth     `json:"dashboard_auth,omitempty"`
-	MCPOAuth           *MCPOAuth          `json:"mcp_oauth,omitempty"`
-	ArchiveAfterIdle   string             `json:"archive_after_idle,omitempty"`
-	DeleteAfterArchive string             `json:"delete_after_archive,omitempty"`
-	DashboardOrigin    string             `json:"dashboard_origin,omitempty"`
-	ManagementListen   string             `json:"management_listen"`
-	PreviewListen      string             `json:"preview_listen"`
-	PreviewDomain      string             `json:"preview_domain"`
-	StateRoot          string             `json:"state_root"`
-	WorkspaceRoot      string             `json:"workspace_root"`
-	DeploymentTokenEnv string             `json:"deployment_token_env"`
-	GitHubTokenEnv     string             `json:"github_token_env,omitempty"`
-	Projects           map[string]Project `json:"projects"`
+	DashboardAuth      *DashboardAuth
+	MCPOAuth           *MCPOAuth
+	ArchiveAfterIdle   string
+	DeleteAfterArchive string
+	DashboardOrigin    string
+	ManagementListen   string
+	PreviewListen      string
+	PreviewDomain      string
+	StateRoot          string
+	WorkspaceRoot      string
+	Projects           map[string]Project
 	token              string
+	githubToken        string
 }
 
 // DashboardAuth maps Pocket ID group names to browser dashboard roles.
@@ -61,10 +64,10 @@ func (o MCPOAuth) validate() error {
 	for name, value := range map[string]string{"issuer": o.Issuer, "resource": o.Resource, "jwks_uri": o.JWKSURI} {
 		u, err := url.Parse(value)
 		if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || strings.ContainsAny(value, "?#") {
-			return fmt.Errorf("mcp_oauth.%s must be an absolute HTTPS URL without credentials, query or fragment", name)
+			return fmt.Errorf("PREVIEW_MCP_%s must be an absolute HTTPS URL without credentials, query or fragment", strings.ToUpper(name))
 		}
 		if name == "resource" && u.EscapedPath() != "/mcp" {
-			return errors.New("mcp_oauth.resource must use the exact /mcp path")
+			return errors.New("PREVIEW_MCP_RESOURCE must use the exact /mcp path")
 		}
 	}
 	return nil
@@ -97,7 +100,7 @@ type Project struct {
 }
 
 func Load(filename string) (Config, error) {
-	var cfg Config
+	cfg := fromEnvironment()
 	f, err := os.Open(filename)
 	if err != nil {
 		return cfg, err
@@ -108,25 +111,66 @@ func Load(filename string) (Config, error) {
 		return Config{}, err
 	}
 	if len(data) > 1<<20 {
-		return Config{}, errors.New("settings file is too large")
+		return Config{}, errors.New("projects file is too large")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("decode settings: %w", err)
+	if err := decoder.Decode(&cfg.Projects); err != nil {
+		return Config{}, fmt.Errorf("decode projects: %w", err)
 	}
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		return Config{}, errors.New("settings must contain one JSON object")
+		return Config{}, errors.New("projects file must contain one JSON object")
 	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
-	cfg.token = os.Getenv(cfg.DeploymentTokenEnv)
 	if cfg.token == "" {
-		return Config{}, fmt.Errorf("deployment token environment variable %s is empty", cfg.DeploymentTokenEnv)
+		return Config{}, errors.New("PREVIEW_SERVER_TOKEN is required")
 	}
 	return cfg, nil
 }
+
+func fromEnvironment() Config {
+	cfg := Config{
+		ManagementListen:   envDefault("PREVIEW_MANAGEMENT_LISTEN", "127.0.0.1:8080"),
+		PreviewListen:      envDefault("PREVIEW_LISTEN", "127.0.0.1:8081"),
+		PreviewDomain:      os.Getenv("PREVIEW_DOMAIN"),
+		StateRoot:          envDefault("PREVIEW_STATE_ROOT", "/var/lib/preview-server"),
+		WorkspaceRoot:      envDefault("PREVIEW_SERVER_WORKSPACE", "/srv/preview-server"),
+		DashboardOrigin:    os.Getenv("PREVIEW_DASHBOARD_ORIGIN"),
+		ArchiveAfterIdle:   os.Getenv("PREVIEW_ARCHIVE_AFTER_IDLE"),
+		DeleteAfterArchive: os.Getenv("PREVIEW_DELETE_AFTER_ARCHIVE"),
+		token:              os.Getenv(deploymentTokenVariable),
+		githubToken:        strings.TrimSpace(os.Getenv(githubTokenVariable)),
+	}
+	dashboard := DashboardAuth{
+		Issuer:       os.Getenv("PREVIEW_DASHBOARD_ISSUER"),
+		ClientID:     os.Getenv("PREVIEW_DASHBOARD_CLIENT_ID"),
+		ViewGroup:    os.Getenv("PREVIEW_DASHBOARD_VIEW_GROUP"),
+		OperateGroup: os.Getenv("PREVIEW_DASHBOARD_OPERATE_GROUP"),
+	}
+	if dashboard != (DashboardAuth{}) {
+		cfg.DashboardAuth = &dashboard
+	}
+	oauth := MCPOAuth{
+		Issuer:   os.Getenv("PREVIEW_MCP_ISSUER"),
+		Resource: os.Getenv("PREVIEW_MCP_RESOURCE"),
+		JWKSURI:  os.Getenv("PREVIEW_MCP_JWKS_URI"),
+	}
+	if oauth != (MCPOAuth{}) {
+		cfg.MCPOAuth = &oauth
+	}
+	return cfg
+}
+
+func envDefault(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func (c Config) GitHubToken() string { return c.githubToken }
 
 func (c Config) Token() string { return c.token }
 
@@ -145,50 +189,44 @@ func (c Config) Validate() error {
 			origin.Hostname() == "" || origin.User != nil || origin.Path != "" ||
 			origin.ForceQuery || origin.RawQuery != "" || origin.Fragment != "" ||
 			origin.String() != origin.Scheme+"://"+origin.Host {
-			return errors.New("dashboard_origin must be an HTTP or HTTPS origin")
+			return errors.New("PREVIEW_DASHBOARD_ORIGIN must be an HTTP or HTTPS origin")
 		}
 	}
 	if a := c.DashboardAuth; a != nil {
 		issuer, err := url.Parse(a.Issuer)
 		if err != nil || issuer.Scheme != "https" || issuer.Hostname() == "" || issuer.User != nil || strings.ContainsAny(a.Issuer, "?#") {
-			return errors.New("dashboard_auth.issuer must be an absolute HTTPS issuer URL")
+			return errors.New("PREVIEW_DASHBOARD_ISSUER must be an absolute HTTPS issuer URL")
 		}
 		if !strings.HasPrefix(c.DashboardOrigin, "https://") {
-			return errors.New("dashboard_auth requires an HTTPS dashboard_origin")
+			return errors.New("dashboard sign-in requires an HTTPS PREVIEW_DASHBOARD_ORIGIN")
 		}
 		if c.MCPOAuth != nil && a.Issuer != c.MCPOAuth.Issuer {
-			return errors.New("dashboard_auth and mcp_oauth must use the same issuer")
+			return errors.New("PREVIEW_DASHBOARD_ISSUER and PREVIEW_MCP_ISSUER must match")
 		}
 		if strings.TrimSpace(a.ClientID) == "" || strings.TrimSpace(a.ViewGroup) == "" || strings.TrimSpace(a.OperateGroup) == "" || a.ViewGroup == a.OperateGroup {
-			return errors.New("dashboard_auth requires a client_id and distinct, nonempty view_group and operate_group")
+			return errors.New("dashboard sign-in requires PREVIEW_DASHBOARD_CLIENT_ID and distinct, nonempty PREVIEW_DASHBOARD_VIEW_GROUP and PREVIEW_DASHBOARD_OPERATE_GROUP")
 		}
 	}
-	if err := validateListener(c.ManagementListen, "management_listen"); err != nil {
+	if err := validateListener(c.ManagementListen, "PREVIEW_MANAGEMENT_LISTEN"); err != nil {
 		return err
 	}
-	if err := validateListener(c.PreviewListen, "preview_listen"); err != nil {
+	if err := validateListener(c.PreviewListen, "PREVIEW_LISTEN"); err != nil {
 		return err
 	}
 	if c.ManagementListen == c.PreviewListen {
-		return errors.New("management_listen and preview_listen must differ")
+		return errors.New("PREVIEW_MANAGEMENT_LISTEN and PREVIEW_LISTEN must differ")
 	}
 	if err := validateDomain(c.PreviewDomain); err != nil {
-		return fmt.Errorf("preview_domain: %w", err)
+		return fmt.Errorf("PREVIEW_DOMAIN: %w", err)
 	}
 	if !pathIsAbsolute(c.StateRoot) {
-		return errors.New("state_root must be an absolute path")
+		return errors.New("PREVIEW_STATE_ROOT must be an absolute path")
 	}
 	if !pathIsAbsolute(c.WorkspaceRoot) {
-		return errors.New("workspace_root must be an absolute path")
+		return errors.New("PREVIEW_SERVER_WORKSPACE must be an absolute path")
 	}
 	if c.StateRoot == c.WorkspaceRoot || strings.HasPrefix(c.StateRoot, c.WorkspaceRoot+"/") || strings.HasPrefix(c.WorkspaceRoot, c.StateRoot+"/") {
-		return errors.New("state_root and workspace_root must be separate directories")
-	}
-	if !envName.MatchString(c.DeploymentTokenEnv) {
-		return errors.New("deployment_token_env must name an environment variable")
-	}
-	if c.GitHubTokenEnv != "" && !envName.MatchString(c.GitHubTokenEnv) {
-		return errors.New("github_token_env must name an environment variable")
+		return errors.New("PREVIEW_STATE_ROOT and PREVIEW_SERVER_WORKSPACE must be separate directories")
 	}
 	if len(c.Projects) == 0 {
 		return errors.New("at least one project is required")
@@ -198,8 +236,8 @@ func (c Config) Validate() error {
 			return fmt.Errorf("invalid project slug %q", name)
 		}
 		for _, source := range project.ComposeEnvFrom {
-			if c.GitHubTokenEnv != "" && source == c.GitHubTokenEnv {
-				return fmt.Errorf("project %q: github_token_env cannot be passed to Compose", name)
+			if source == deploymentTokenVariable || source == githubTokenVariable {
+				return fmt.Errorf("project %q: %s cannot be passed to Compose", name, source)
 			}
 		}
 		if err := project.Validate(); err != nil {
