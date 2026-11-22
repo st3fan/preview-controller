@@ -26,17 +26,22 @@ const (
 	roleOperate   = "operate"
 )
 
-type roleKey struct{}
+type accountKey struct{}
 
-func requestRole(r *http.Request) string {
-	role, _ := r.Context().Value(roleKey{}).(string)
-	return role
+type dashboardAccount struct {
+	role  string
+	Email string
+}
+
+func requestAccount(r *http.Request) *dashboardAccount {
+	account, _ := r.Context().Value(accountKey{}).(*dashboardAccount)
+	return account
 }
 
 type browserSession struct {
-	role   string
-	ctx    context.Context
-	cancel context.CancelFunc
+	account dashboardAccount
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 type dashboardAccess struct {
@@ -79,7 +84,7 @@ func WithAccess(ctx context.Context, cfg config.Config, next http.Handler) (http
 			ClientID:    cfg.DashboardAuth.ClientID,
 			Endpoint:    endpoint,
 			RedirectURL: cfg.DashboardOrigin + callbackPath,
-			Scopes:      []string{oidc.ScopeOpenID, "groups"},
+			Scopes:      []string{oidc.ScopeOpenID, "groups", "email"},
 		},
 		verifier: provider.Verifier(&oidc.Config{ClientID: cfg.DashboardAuth.ClientID}),
 	}
@@ -113,11 +118,11 @@ func (a *dashboardAccess) handler(next http.Handler) http.Handler {
 			http.Error(w, "Dashboard sign-in required", http.StatusUnauthorized)
 			return
 		}
-		if r.Method != "GET" && r.Method != "HEAD" && s.role != roleOperate {
+		if r.Method != "GET" && r.Method != "HEAD" && s.account.role != roleOperate {
 			http.Error(w, "Operate access required", http.StatusForbidden)
 			return
 		}
-		ctx, cancel := context.WithCancel(context.WithValue(r.Context(), roleKey{}, s.role))
+		ctx, cancel := context.WithCancel(context.WithValue(r.Context(), accountKey{}, &s.account))
 		defer cancel()
 		stop := context.AfterFunc(s.ctx, cancel)
 		defer stop()
@@ -183,6 +188,7 @@ func (a *dashboardAccess) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var claims struct {
+		Email  string   `json:"email"`
 		Groups []string `json:"groups"`
 	}
 	if err := id.Claims(&claims); err != nil {
@@ -205,7 +211,7 @@ func (a *dashboardAccess) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	key := rand.Text()
 	sessionCtx, end := context.WithTimeout(context.Background(), lifetime)
-	a.sessions.Store(key, browserSession{role, sessionCtx, end})
+	a.sessions.Store(key, browserSession{account: dashboardAccount{role: role, Email: claims.Email}, ctx: sessionCtx, cancel: end})
 	context.AfterFunc(sessionCtx, func() { a.sessions.Delete(key) })
 	browserCookie(w, sessionCookie, key, int(lifetime.Seconds()))
 	destination, err := base64.RawURLEncoding.DecodeString(parts[3])

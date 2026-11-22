@@ -44,7 +44,7 @@ a { color: var(--link); text-underline-offset: .18em; }
 code { color: inherit; font-size: .85rem; }
 :focus-visible { outline: 2px solid var(--link); outline-offset: 3px; }
 .mast { background: var(--header); color: white; }
-.mast-inner { display: flex; align-items: center; gap: .75rem; min-height: 4rem; }
+.mast-inner { display: flex; flex-wrap: wrap; padding-block: .5rem; align-items: center; gap: .75rem; min-height: 4rem; }
 .brand-mark {
   display: grid;
   place-items: center;
@@ -73,7 +73,18 @@ code { color: inherit; font-size: .85rem; }
   background: transparent;
   color: var(--link);
 }
-#theme-toggle { margin-left: auto; width: 36px; height: 36px; color: white; }
+.mast-controls { display: flex; align-items: center; gap: .75rem; margin-left: auto; max-width: 100%; }
+.account-line { font-size: .875rem; text-align: right; overflow-wrap: anywhere; }
+.account-line button {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: .18em;
+  white-space: nowrap;
+}
+#theme-toggle { flex: none; width: 36px; height: 36px; color: white; }
 #theme-toggle:hover, #theme-toggle:focus-visible { background: #ffffff30; }
 .icon { width: 1em; height: 1em; fill: currentColor; pointer-events: none; }
 .external { margin-left: .3em; font-size: .8em; }

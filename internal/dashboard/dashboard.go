@@ -57,7 +57,7 @@ type project struct {
 }
 
 type view struct {
-	SignedIn      bool
+	Account       *dashboardAccount
 	Host          hostSnapshot
 	Unavailable   bool
 	Projects      []project
@@ -87,8 +87,7 @@ func Register(mux *http.ServeMux, shutdown context.Context, cfg config.Config, d
 
 func registerDashboard(mux *http.ServeMux, sample func() hostSnapshot, shutdown context.Context, projects map[string]config.Project, list func() ([]state.Environment, error), changes func() <-chan struct{}, monitor *health.Monitor, titles *issueTitles) {
 	load := func(r *http.Request) view {
-		role := requestRole(r)
-		data := view{SignedIn: role != ""}
+		data := view{Account: requestAccount(r)}
 		envs, err := list()
 		if err != nil {
 			data.Unavailable = true
@@ -97,7 +96,7 @@ func registerDashboard(mux *http.ServeMux, sample func() hostSnapshot, shutdown 
 
 		for _, env := range envs {
 			row := environment{
-				CanOperate:     role == "" || role == roleOperate,
+				CanOperate:     data.Account == nil || data.Account.role == roleOperate,
 				BackendName:    backendName(env),
 				Project:        env.Project,
 				Health:         monitor.Lookup(env),
