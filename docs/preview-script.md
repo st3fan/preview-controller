@@ -19,7 +19,7 @@ health, and publishes it at the stable URL for the Intent.
    operator. The application must listen on an interface reachable through
    the container port, typically `0.0.0.0`. The controller assigns the host port
    and checks the configured health path before switching the stable URL.
-   See the [example controller configuration](../config/preview-server.example.json).
+   See the [example controller configuration](../config/projects.example.json).
 
 ## Implement the client
 

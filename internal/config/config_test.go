@@ -4,18 +4,18 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
 
 func validConfig(root string) Config {
 	return Config{
-		ManagementListen:   "127.0.0.1:8080",
-		PreviewListen:      "127.0.0.1:8081",
-		PreviewDomain:      "preview.example.com",
-		StateRoot:          root,
-		WorkspaceRoot:      filepath.Join(filepath.Dir(root), "workspaces"),
-		DeploymentTokenEnv: "PREVIEW_TEST_TOKEN",
+		ManagementListen: "127.0.0.1:8080",
+		PreviewListen:    "127.0.0.1:8081",
+		PreviewDomain:    "preview.example.com",
+		StateRoot:        root,
+		WorkspaceRoot:    filepath.Join(filepath.Dir(root), "workspaces"),
 		Projects: map[string]Project{
 			"myproject": {
 				Repository:    "https://github.com/example/myproject.git",
@@ -28,30 +28,127 @@ func validConfig(root string) Config {
 	}
 }
 
-func TestLoadAndURL(t *testing.T) {
-	t.Setenv("PREVIEW_TEST_TOKEN", "secret-value")
-	cfg := validConfig(filepath.Join(t.TempDir(), "state"))
-	data, err := json.Marshal(cfg)
+func isolatedEnvironment(t *testing.T) {
+	t.Helper()
+	for _, item := range os.Environ() {
+		key, _, _ := strings.Cut(item, "=")
+		if strings.HasPrefix(key, "PREVIEW_") {
+			t.Setenv(key, "")
+		}
+	}
+	t.Setenv("PREVIEW_SERVER_TOKEN", "deployment-secret")
+	t.Setenv("PREVIEW_DOMAIN", "preview.example.com")
+}
+
+func writeProjects(t *testing.T, contents []byte) string {
+	t.Helper()
+	filename := filepath.Join(t.TempDir(), "projects.json")
+	if err := os.WriteFile(filename, contents, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return filename
+}
+
+func TestLoadMigratedSettings(t *testing.T) {
+	isolatedEnvironment(t)
+	want := validConfig(filepath.Join(t.TempDir(), "state"))
+	want.ManagementListen = "127.0.0.2:9090"
+	want.PreviewListen = "127.0.0.3:9091"
+	want.ArchiveAfterIdle = "72h"
+	want.DeleteAfterArchive = "96h"
+	want.DashboardOrigin = "https://dashboard.example.com"
+	want.DashboardAuth = &DashboardAuth{Issuer: "https://id.example.com", ClientID: "browser", ViewGroup: "view", OperateGroup: "operate"}
+	want.MCPOAuth = &MCPOAuth{Issuer: want.DashboardAuth.Issuer, Resource: want.DashboardOrigin + "/mcp", JWKSURI: want.DashboardAuth.Issuer + "/keys"}
+	want.token = "deployment-secret"
+	want.githubToken = "github-secret"
+	project := want.Projects["myproject"]
+	project.ArchiveAfterIdle = "12h"
+	project.ComposeEnv = map[string]string{"APP_MODE": "preview"}
+	project.ComposeEnvFrom = map[string]string{"APP_TOKEN": "APP_TOKEN_SOURCE"}
+	want.Projects["myproject"] = project
+	want.Projects["web"] = Project{Backend: BackendDocker, Repository: "https://github.com/example/web", HealthPath: "/"}
+	for key, value := range map[string]string{
+		"PREVIEW_MANAGEMENT_LISTEN":       want.ManagementListen,
+		"PREVIEW_LISTEN":                  want.PreviewListen,
+		"PREVIEW_STATE_ROOT":              want.StateRoot,
+		"PREVIEW_SERVER_WORKSPACE":        want.WorkspaceRoot,
+		"PREVIEW_GITHUB_TOKEN":            want.githubToken,
+		"PREVIEW_ARCHIVE_AFTER_IDLE":      want.ArchiveAfterIdle,
+		"PREVIEW_DELETE_AFTER_ARCHIVE":    want.DeleteAfterArchive,
+		"PREVIEW_DASHBOARD_ORIGIN":        want.DashboardOrigin,
+		"PREVIEW_DASHBOARD_ISSUER":        want.DashboardAuth.Issuer,
+		"PREVIEW_DASHBOARD_CLIENT_ID":     want.DashboardAuth.ClientID,
+		"PREVIEW_DASHBOARD_VIEW_GROUP":    want.DashboardAuth.ViewGroup,
+		"PREVIEW_DASHBOARD_OPERATE_GROUP": want.DashboardAuth.OperateGroup,
+		"PREVIEW_MCP_ISSUER":              want.MCPOAuth.Issuer,
+		"PREVIEW_MCP_RESOURCE":            want.MCPOAuth.Resource,
+		"PREVIEW_MCP_JWKS_URI":            want.MCPOAuth.JWKSURI,
+	} {
+		t.Setenv(key, value)
+	}
+	projects, err := json.Marshal(want.Projects)
 	if err != nil {
 		t.Fatal(err)
 	}
-	name := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(name, data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := Load(name)
+	got, err := Load(writeProjects(t, projects))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Token() != "secret-value" {
-		t.Fatal("token environment variable was not loaded")
+	if !reflect.DeepEqual(got, want) {
+		t.Fatal("migrated configuration differs")
 	}
-	url, err := loaded.URL("myproject", 123)
+	url, err := got.URL("myproject", 123)
 	if err != nil || url != "https://myproject-123.preview.example.com" {
 		t.Fatalf("URL = %q, %v", url, err)
 	}
-	if strings.Contains(string(data), "secret-value") {
-		t.Fatal("token was serialized into global settings")
+}
+
+func TestLoadRejectsMalformedProjects(t *testing.T) {
+	isolatedEnvironment(t)
+	for _, contents := range []string{"null", "{}", "[]", "{", `{"web":{"unknown":true}}`, `{} {}`, `{"projects":{"web":{}}}`, strings.Repeat(" ", 1<<20+1)} {
+		if _, err := Load(writeProjects(t, []byte(contents))); err == nil {
+			t.Fatal("invalid projects file was accepted")
+		}
+	}
+}
+
+func TestLoadAuthConfiguration(t *testing.T) {
+	isolatedEnvironment(t)
+	projects := writeProjects(t, []byte(`{"web":{"backend":"docker","repository":"https://github.com/example/web","health_path":"/"}}`))
+	cfg, err := Load(projects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MCPOAuth != nil || cfg.DashboardAuth != nil || cfg.GitHubToken() != "" ||
+		cfg.ManagementListen != "127.0.0.1:8080" || cfg.PreviewListen != "127.0.0.1:8081" ||
+		cfg.StateRoot != "/var/lib/preview-server" || cfg.WorkspaceRoot != "/srv/preview-server" {
+		t.Fatal("unexpected defaults")
+	}
+	for _, test := range []struct{ key, value, message string }{
+		{"PREVIEW_SERVER_TOKEN", "", "PREVIEW_SERVER_TOKEN"},
+		{"PREVIEW_DOMAIN", "", "PREVIEW_DOMAIN"},
+		{"PREVIEW_MCP_ISSUER", "https://id.example.com", "PREVIEW_MCP_"},
+		{"PREVIEW_DASHBOARD_CLIENT_ID", "browser", "PREVIEW_DASHBOARD_ISSUER"},
+	} {
+		t.Run(test.key, func(t *testing.T) {
+			t.Setenv(test.key, test.value)
+			_, err := Load(projects)
+			if err == nil || !strings.Contains(err.Error(), test.message) || strings.Contains(err.Error(), "deployment-secret") {
+				t.Fatalf("unexpected validation result: %v", err)
+			}
+		})
+	}
+}
+
+func TestRejectControllerCredentialSources(t *testing.T) {
+	for _, source := range []string{"PREVIEW_SERVER_TOKEN", "PREVIEW_GITHUB_TOKEN"} {
+		cfg := validConfig(filepath.Join(t.TempDir(), "state"))
+		p := cfg.Projects["myproject"]
+		p.ComposeEnvFrom = map[string]string{"APP_TOKEN": source}
+		cfg.Projects["myproject"] = p
+		if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), source) {
+			t.Fatalf("unexpected validation for %s: %v", source, err)
+		}
 	}
 }
 

@@ -72,8 +72,7 @@ func TestPreviewDetail(t *testing.T) {
 
 func TestDetailGitHubMetadata(t *testing.T) {
 	cfg := config.Config{
-		GitHubTokenEnv: "PREVIEW_GITHUB_TOKEN",
-		Projects:       map[string]config.Project{"alpha": {Repository: "https://github.com/example/alpha.git/"}},
+		Projects: map[string]config.Project{"alpha": {Repository: "https://github.com/example/alpha.git/"}},
 	}
 	opened := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	commit := strings.Repeat("a", 40)

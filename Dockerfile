@@ -15,4 +15,4 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
 FROM docker:29.10.0-cli
 COPY --from=build /preview-server /usr/local/bin/preview-server
 ENTRYPOINT ["/usr/local/bin/preview-server"]
-CMD ["-config", "/etc/preview-server.json"]
+CMD ["-projects", "/etc/preview-server/projects.json"]

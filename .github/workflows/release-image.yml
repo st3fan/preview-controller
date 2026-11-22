@@ -106,7 +106,8 @@ jobs:
         run: |
           export DOCKER_CONFIG="$(mktemp -d)"
           export PREVIEW_SERVER_IMAGE="$IMAGE@$DIGEST"
-          export PREVIEW_SERVER_CONFIG="$PWD/config/preview-server.example.json"
+          export PREVIEW_PROJECTS_FILE="$PWD/config/projects.example.json"
+          export PREVIEW_DOMAIN=preview.example.com
           export PREVIEW_SERVER_WORKSPACE=/srv/preview-server
           export PREVIEW_SERVER_TOKEN=release-smoke-test
           sudo install -d -m 0700 "$PREVIEW_SERVER_WORKSPACE"
@@ -127,6 +128,7 @@ jobs:
           PREVIEW_SERVER_TOKEN: release-smoke-test
         run: |
           export PREVIEW_SERVER_IMAGE="$IMAGE@$DIGEST"
-          export PREVIEW_SERVER_CONFIG="$PWD/config/preview-server.example.json"
+          export PREVIEW_PROJECTS_FILE="$PWD/config/projects.example.json"
+          export PREVIEW_DOMAIN=preview.example.com
           docker compose -f compose.portainer.yaml logs controller
           docker compose -f compose.portainer.yaml down --volumes

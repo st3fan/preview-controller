@@ -24,20 +24,20 @@ import (
 )
 
 func main() {
-	settings := flag.String("config", config.DefaultPath, "path to global settings JSON")
+	projects := flag.String("projects", config.DefaultProjectsPath, "path to project definitions JSON")
 	verbose := flag.Bool("verbose", false, "log controller activity and deployment progress")
 	flag.Parse()
 	if *verbose {
 		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	}
-	if err := run(*settings); err != nil {
+	if err := run(*projects); err != nil {
 		slog.Error("preview server stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(settings string) error {
-	cfg, err := config.Load(settings)
+func run(projects string) error {
+	cfg, err := config.Load(projects)
 	if err != nil {
 		return err
 	}

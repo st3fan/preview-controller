@@ -16,44 +16,23 @@ For a prebuilt image, see [Portainer installation](docs/installation.md#portaine
 Use a dedicated Linux host with rootful Docker Engine and the Docker Compose
 plugin. The controller gets host-level access through the Docker socket.
 
-1. Clone the repository and prepare the workspace. For a fresh installation,
-   install the example settings. If you already have
-   `/etc/preview-server.json`, edit that file in place.
+1. Clone the repository and prepare the workspace. For an existing installation, follow the [migration guide](docs/installation.md#migrate-from-the-combined-settings-file) before starting the updated controller.
 
    ```bash
    git clone https://github.com/st3fan/preview-controller.git
    cd preview-controller
    sudo install -d -o root -g root -m 0700 /srv/preview-server
+   install -m 0600 .env.example .env
+   install -m 0600 config/projects.example.json projects.json
    ```
 
-   On a fresh installation, run:
+2. In `.env`, set `PREVIEW_DOMAIN` and a long random `PREVIEW_SERVER_TOKEN`. In `projects.json`, replace the example with your project slug, public repository, Compose file, public service, port and health path. Compose mounts this file read-only.
+
+3. Build and start the controller. Compose reads `.env` when you run this command.
 
    ```bash
-   sudo install -m 0600 config/preview-server.example.json /etc/preview-server.json
-   ```
-
-2. Edit the settings with `sudoedit /etc/preview-server.json`. Replace the
-   example project with your public GitHub repository and set its Compose file,
-   public service, port, and health path. Set `preview_domain` to your preview
-   domain. Keep these values for the shipped Compose definition:
-
-   | Setting | Value |
-   | --- | --- |
-   | `state_root` | `/var/lib/preview-server` |
-   | `workspace_root` | `/srv/preview-server` |
-   | `deployment_token_env` | `PREVIEW_SERVER_TOKEN` |
-
-3. From the repository directory, enter your deployment bearer token and
-   build and start the controller. Use the same token in deployment requests.
-
-   ```bash
-   read -rsp 'Deployment bearer token: ' PREVIEW_SERVER_TOKEN
-   export PREVIEW_SERVER_TOKEN
    docker compose up -d --build
-   unset PREVIEW_SERVER_TOKEN
    ```
-
-   Supply the token again when recreating the controller.
 
 4. Check the service on the preview host. With the example listener settings,
    the health endpoint returns HTTP 204 and the dashboard is at
@@ -84,20 +63,13 @@ Use Go 1.27 or newer. Build a Linux executable with CGO disabled; set
 GOOS=linux CGO_ENABLED=0 go build -o preview-server ./cmd/preview-server
 ```
 
-Copy [the example settings](config/preview-server.example.json) to
-`/etc/preview-server.json` and adjust the project allowlist, state root,
-workspace root, and management listener for the host. Put the bearer secret in
-the environment variable named by `deployment_token_env`; the settings file
-contains no deployment state. The management listener accepts only a loopback or private
-IP address. The service account needs write access to the state and workspace
-roots and access to the local Docker daemon. Run it only on a dedicated preview
-host; Docker builds and containers can execute untrusted project code there.
-The `preview_listen` address is a separate listener for Caddy. See
-[Linux installation and ingress setup](docs/installation.md).
+Set the [controller environment variables](docs/installation.md#controller-settings), then start the binary with the project definitions file:
 
 ```sh
-PREVIEW_SERVER_TOKEN='replace-with-a-secret' ./preview-server -config /etc/preview-server.json
+./preview-server -projects /etc/preview-server/projects.json
 ```
+
+The service account needs write access to the state and workspace directories and access to Docker on the dedicated preview host. See the [native service instructions](docs/installation.md#native-executable-and-systemd).
 
 Add `-verbose` to the server command to log startup reconciliation, deployment
 progress, health checks, route switches, and cleanup. Use the deployment ID
@@ -131,8 +103,7 @@ health before reopening its URL. Restore an archived preview before deploying a
 new commit to it.
 
 The controller permanently deletes an archived preview seven days after it was
-stopped. Set `archive_after_idle` and `delete_after_archive` in the global JSON
-settings to change the defaults. Each project can override either interval
+stopped. Set `PREVIEW_ARCHIVE_AFTER_IDLE` and `PREVIEW_DELETE_AFTER_ARCHIVE` in the controller environment to change the defaults. Each project can override either interval
 independently. Use positive Go duration strings such as `24h` or `168h`.
 The dashboard shows each deadline and offers Archive, Restore, and Delete.
 Delete starts permanent cleanup immediately. Cleanup removes identifiable
@@ -191,21 +162,15 @@ preview application hosts routed to the separate preview listener.
    user-delegated API access to `preview:operate` under **Access → API Access**.
    Keep the API-wide **Allow all metadata document clients** setting off,
    and grant this permission only to operator-group-restricted clients.
-3. Add the following object to the controller settings. Copy `issuer` and
-   `jwks_uri` from the issuer’s `/.well-known/openid-configuration`. The
-   controller must trust the certificate at the signing-key URL. It supports
-   RS256 (the Pocket ID default), ES256 and EdDSA. Remove `operator_subjects`
-   if you configured an earlier version of this draft.
+3. Set these variables in the controller’s `.env`. Copy the issuer and signing-key URL from the issuer’s `/.well-known/openid-configuration`. The controller must trust the certificate at the signing-key URL. It supports RS256 (the Pocket ID default), ES256 and EdDSA.
 
-```json
-"mcp_oauth": {
-  "issuer": "https://pocket-id.example.net",
-  "jwks_uri": "https://pocket-id.example.net/.well-known/jwks.json",
-  "resource": "https://preview.example.com/mcp"
-}
+```dotenv
+PREVIEW_MCP_ISSUER=https://pocket-id.example.net
+PREVIEW_MCP_JWKS_URI=https://pocket-id.example.net/.well-known/jwks.json
+PREVIEW_MCP_RESOURCE=https://preview.example.com/mcp
 ```
 
-4. Restart the controller. From the workstation, request `/mcp` without
+4. Apply the changes with `docker compose up -d`. From the workstation, request `/mcp` without
    credentials. Its 401 challenge links to the protected-resource metadata.
    Check that the metadata advertises the exact HTTPS resource and issuer.
    From the trusted network, verify that the same host serves the dashboard at
@@ -291,7 +256,7 @@ preview visitors. Submissions without it show the issue number alone.
 Expand **Discuss this intent** to copy a starter prompt for your chat. **Open in
 Codex** prefills the same prompt in the desktop app for you to review and send.
 
-Set the optional top-level `dashboard_origin` to the browser-reachable origin
+Set the optional `PREVIEW_DASHBOARD_ORIGIN` to the browser-reachable origin
 of your existing operator dashboard (for example, `https://operator.example.com`).
 When live logs are available for the active attempt, the inspector links to that
 attempt's logs through the existing operator listener. Keep its existing network

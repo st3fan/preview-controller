@@ -8,7 +8,6 @@ import (
 	"html/template"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -77,7 +76,7 @@ func appendEnvironment(groups []project, row environment) []project {
 
 func Register(mux *http.ServeMux, shutdown context.Context, cfg config.Config, detail func(string, int64) (state.Environment, error), list func() ([]state.Environment, error), changes func() <-chan struct{}, monitor *health.Monitor) {
 	titles := newIssueTitles()
-	if token := strings.TrimSpace(os.Getenv(cfg.GitHubTokenEnv)); token != "" {
+	if token := cfg.GitHubToken(); token != "" {
 		go titles.run(shutdown, cfg.Projects, list, changes, githubmeta.New(token).LookupTitle)
 	}
 	sample := newHostSampler(cfg.WorkspaceRoot)
