@@ -68,6 +68,14 @@ func TestBrowserSignIn(t *testing.T) {
 	RegisterLogs(mux, ctx, store.Load, func(context.Context, state.Attempt) (func(io.Writer) error, error) {
 		return func(w io.Writer) error { _, err := io.WriteString(w, "preview output"); return err }, nil
 	})
+	for _, path := range []string{"/", "/dashboard/previews/alpha/1"} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		body := w.Body.String()
+		if w.Code != 200 || strings.Contains(body, "/dashboard/logout") || strings.Contains(body, "Signed in as") || !strings.Contains(body, `id="theme-toggle"`) {
+			t.Fatalf("%s: unexpected open-mode controls", path)
+		}
+	}
 	actions := 0
 	action := func(string) error { actions++; return nil }
 	RegisterArchive(mux, action, action)
@@ -100,7 +108,7 @@ func TestBrowserSignIn(t *testing.T) {
 		status  int
 		operate bool
 	}{
-		{"viewer", []string{"readers"}, 303, false}, {"operator", []string{"operators"}, 303, true}, {"both", []string{"readers", "operators"}, 303, true}, {"neither", []string{"elsewhere"}, 403, false}, {"no groups", nil, 403, false}, {"wrong nonce", []string{"operators"}, 401, false}, {"wrong state", []string{"operators"}, 401, false}, {"expired identity", []string{"operators"}, 401, false}, {"wrong audience", []string{"operators"}, 401, false},
+		{"viewer", []string{"readers"}, 303, false}, {"operator", []string{"operators"}, 303, true}, {"missing email", []string{"readers"}, 303, false}, {"both", []string{"readers", "operators"}, 303, true}, {"neither", []string{"elsewhere"}, 403, false}, {"no groups", nil, 403, false}, {"wrong nonce", []string{"operators"}, 401, false}, {"wrong state", []string{"operators"}, 401, false}, {"expired identity", []string{"operators"}, 401, false}, {"wrong audience", []string{"operators"}, 401, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			const detail = "/dashboard/previews/alpha/1"
@@ -110,10 +118,13 @@ func TestBrowserSignIn(t *testing.T) {
 				t.Fatal(err)
 			}
 			q := u.Query()
-			if login.Code != http.StatusSeeOther || u.Path != "/authorize" || q.Get("scope") != "openid groups" || q.Get("code_challenge_method") != "S256" || q.Get("redirect_uri") != cfg.DashboardOrigin+callbackPath {
+			if login.Code != http.StatusSeeOther || u.Path != "/authorize" || q.Get("scope") != "openid groups email" || q.Get("code_challenge_method") != "S256" || q.Get("redirect_uri") != cfg.DashboardOrigin+callbackPath {
 				t.Fatal(q)
 			}
 			claims := map[string]any{"aud": "dashboard", "iss": provider.URL, "sub": "human", "nonce": q.Get("nonce"), "exp": time.Now().Add(time.Hour).Unix(), "groups": tc.groups}
+			if tc.name != "missing email" {
+				claims["email"] = "dev&ops@example.org"
+			}
 			stateValue := q.Get("state")
 			switch tc.name {
 			case "wrong nonce":
@@ -150,8 +161,21 @@ func TestBrowserSignIn(t *testing.T) {
 				t.Fatal("invalid session or return path")
 			}
 			page := request("GET", "/", session, "")
-			if page.Code != 200 || !strings.Contains(page.Body.String(), "Sign out") || strings.Contains(page.Body.String(), "data-delete-url=") != tc.operate || strings.Contains(page.Body.String(), `data-action="archive"`) != tc.operate {
+			if page.Code != 200 || strings.Contains(page.Body.String(), "data-delete-url=") != tc.operate || strings.Contains(page.Body.String(), `data-action="archive"`) != tc.operate {
 				t.Fatal("wrong dashboard controls", page.Code)
+			}
+			for path, response := range map[string]*httptest.ResponseRecorder{"/": page, detail: request("GET", detail, session, "")} {
+				body := response.Body.String()
+				if response.Code != 200 || !strings.Contains(body, `method="post" action="/dashboard/logout"`) || !strings.Contains(body, ">Sign Out</button>") {
+					t.Fatalf("%s: missing sign-out control", path)
+				}
+				if tc.name == "missing email" {
+					if strings.Contains(body, "Signed in as") {
+						t.Fatalf("%s: unexpected account label", path)
+					}
+				} else if !strings.Contains(body, "Signed in as dev&amp;ops@example.org - ") {
+					t.Fatalf("%s: missing escaped account email", path)
+				}
 			}
 			logRequest, err := http.NewRequestWithContext(ctx, "GET", server.URL+"/dashboard/logs/alpha/1/active", nil)
 			if err != nil {
@@ -209,7 +233,7 @@ func TestDashboardSessionExpiryStopsStream(t *testing.T) {
 	a := new(dashboardAccess)
 	session, end := context.WithTimeout(t.Context(), 150*time.Millisecond)
 	defer end()
-	a.sessions.Store("test", browserSession{roleView, session, end})
+	a.sessions.Store("test", browserSession{account: dashboardAccount{role: roleView}, ctx: session, cancel: end})
 	started := make(chan struct{})
 	done := make(chan struct{})
 	handler := a.handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
